@@ -3,7 +3,7 @@
 **Hackathon:** Nebius × NVIDIA Hackathon  
 **Track:** Best Apps and Agents  
 **Project Name:** Strazh / RTAP (Red Team Assessment Platform)  
-**Elevator Pitch:** An automated, law-enforced security assessment control plane and red-teaming agent that evaluates LLM application safety against prompt injections, canary disclosures, and instruction overrides using NVIDIA Nemotron models served via Nebius Token Factory.
+**Elevator Pitch:** An AI red-team assessment and reporting platform that evaluates LLM application safety against single-turn prompt injections, canary disclosures, and instruction overrides using NVIDIA Nemotron models served via Nebius Token Factory, validated by 94 formal architectural laws and exportable to OASIS SARIF.
 
 ---
 

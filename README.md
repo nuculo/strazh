@@ -1,6 +1,6 @@
 # Strazh / Red Team Assessment Platform (RTAP)
 
-**Strazh / RTAP** is an automated, law-enforced security assessment control plane and red-teaming agent for Large Language Models (LLMs) and generative AI applications. Submitted to the **Nebius × NVIDIA Hackathon** in the **Best Apps and Agents** track, it acts as an autonomous evaluation agent that plans, reserves, executes, and grades adversarial probe suites against target LLM applications using **NVIDIA Nemotron** models served via **Nebius Token Factory**.
+**Strazh / RTAP** is an AI red-team assessment and reporting platform for Large Language Models (LLMs) and generative AI applications. Submitted to the **Nebius × NVIDIA Hackathon** in the **Best Apps and Agents** track, it provides a law-enforced evaluation runner that reserves, executes, and grades single-turn adversarial probe suites against target LLM applications using **NVIDIA Nemotron** models served via **Nebius Token Factory**.
 
 ---
 
