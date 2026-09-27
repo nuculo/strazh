@@ -7,7 +7,7 @@
 ## What Strazh / RTAP Actually Does
 
 1. **Automated Security Assessments:** Ingests declarative target definitions (`target.yaml`) and executes targeted probe suites against LLM applications.
-2. **Deterministic Architecture Laws:** Strictly validates all executions against **94 formal architectural laws** (90 machine-checked and passing, 0 failed, 4 pending external runtime integration for KMS and Rust dynamic facades). Invariants guarantee atomic database transactions, fenced attempt commits, deterministic verdict derivation, and out-of-band payload isolation.
+2. **Deterministic Architecture Laws:** Strictly validates executions against formal architectural laws (**94 defined, 90 passing, 4 pending** external runtime integration for KMS and Rust dynamic facades). Invariants guarantee atomic database transactions, fenced attempt commits, deterministic verdict derivation, and out-of-band payload isolation.
 3. **Honest Coverage Accounting:** Explicitly tracks scheduled vs. resolved probes. Probes failing due to transport, target, or network errors result in an `INCOMPLETE` run (Exit Code 2), preventing false claims of security.
 4. **Four-State Verdict Semantics:**
    - **`VULNERABLE`:** Confirmed security breach (e.g. canary secret disclosed or instructions overridden). Maps to SARIF `fail`.
@@ -175,7 +175,7 @@ npm --prefix m0/promptfoo-runtime ci
 # Compile TypeScript to dist/
 npm run build
 
-# Run the 94 Architecture Laws (90 passed, 0 failed, 4 pending external)
+# Run the Architecture Laws suite (94 defined, 90 passing, 4 pending)
 npm run laws
 
 # Run the complete test suite (109 test files, 757 tests)

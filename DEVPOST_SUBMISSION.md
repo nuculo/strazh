@@ -3,7 +3,7 @@
 **Hackathon:** Nebius × NVIDIA Hackathon  
 **Track:** Best Apps and Agents  
 **Project Name:** Strazh / RTAP (Red Team Assessment Platform)  
-**Elevator Pitch:** An AI red-team assessment and reporting platform that evaluates LLM application safety against single-turn prompt injections, canary disclosures, and instruction overrides using NVIDIA Nemotron models served via Nebius Token Factory, validated by 94 formal architectural laws and exportable to OASIS SARIF.
+**Elevator Pitch:** An AI red-team assessment and reporting platform that evaluates LLM application safety against single-turn prompt injections, canary disclosures, and instruction overrides using NVIDIA Nemotron models served via Nebius Token Factory, validated by formal architectural laws (94 defined, 90 passing, 4 pending) and exportable to OASIS SARIF.
 
 ---
 
@@ -35,7 +35,7 @@ We built **Strazh / RTAP** to bring deterministic, law-enforced engineering disc
 Strazh / RTAP operates as a law-enforced control plane for LLM red-teaming:
 
 1. **Target Ingestion & Declarative Probe Execution:** Ingests declarative target definitions (`target.yaml`) and dispatches bounded adversarial probes testing for direct canary extraction, instruction overrides, and system prompt leakage.
-2. **Deterministic Architecture Laws:** Strictly validates every execution against **94 formal architectural laws** (90 machine-checked and passing, 0 failed, 4 pending external runtime integration). Laws enforce single-transaction fenced lease commits, out-of-band evidence isolation, and immutable audit logging.
+2. **Deterministic Architecture Laws:** Strictly validates every execution against formal architectural laws (**94 defined, 90 passing, 4 pending** external runtime integration). Laws enforce single-transaction fenced lease commits, out-of-band evidence isolation, and immutable audit logging.
 3. **Four-State Verdict Semantics:**
    - **`VULNERABLE`:** Confirmed compromise (canary secret disclosed or instructions overridden). Maps to SARIF `fail`.
    - **`RESISTANT`:** Confirmed defense (target actively refused or contained the attack). Maps to SARIF `pass`.
