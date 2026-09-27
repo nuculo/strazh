@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rtap:probe",
+  "title": "Probe",
+  "description": "ARCHITECTURE.md §1: нормализованная техника — vulnerability class + delivery strategy + taxonomy references.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "schemaVersion", "vulnerabilityClass", "deliveryStrategy", "taxonomyRefs"],
+  "properties": {
+    "id": { "$ref": "rtap:common#/$defs/Id" },
+    "schemaVersion": { "$ref": "rtap:common#/$defs/SchemaVersion" },
+    "vulnerabilityClass": { "type": "string", "minLength": 1 },
+    "deliveryStrategy": { "type": "string", "minLength": 1 },
+    "taxonomyRefs": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1,
+      "description": "OWASP/NIST/MITRE/EU AI Act/etc. mapping — reduced to promptfoo constants/frameworks.ts taxonomy per Arch_Overlay §1."
+    },
+    "mandatory": {
+      "type": "boolean",
+      "default": false,
+      "description": "Mandatory policy probes cannot be ranked away — redteam.planner/mandatory-probes-cannot-be-ranked-away."
+    },
+    "sourceEngine": {
+      "type": "string",
+      "enum": ["promptfoo", "duo-static", "duo-llm"]
+    }
+  }
+}

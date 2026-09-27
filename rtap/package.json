@@ -1,0 +1,49 @@
+{
+  "name": "@red-team/rtap",
+  "version": "0.0.0",
+  "private": true,
+  "description": "RedTeam Assessment Platform (RTAP) — Control Plane. See wiki/Arch_Overlay/ARCHITECTURE.md.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsc demo/server.ts demo/app.ts --outDir dist/demo --module NodeNext --target ES2022 --moduleResolution NodeNext --skipLibCheck",
+    "start": "node dist/server/server.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:m0": "tsc -p m0/tsconfig.json",
+    "laws": "tsx src/laws/cli.ts",
+    "worker:promptfoo": "tsx src/worker/cli.ts",
+    "worker:duo-static": "tsx src/worker/duo-static-cli.ts",
+    "worker:duo-llm": "tsx src/worker/duo-llm-cli.ts",
+    "approval": "tsx src/approval/cli.ts",
+    "planner": "tsx src/planner/cli.ts",
+    "promotion": "tsx src/promotion/cli.ts",
+    "signing": "tsx src/signing/cli.ts",
+    "admission-evidence": "tsx src/training/admission-evidence-cli.ts",
+    "report": "tsx src/pipeline/report-cli.ts",
+    "assess": "tsx src/cli/assess.ts",
+    "assess:demo:baseline": "tsx src/cli/assess.ts --target=demo/targets/baseline.yaml --out-dir=demo/out/baseline",
+    "assess:demo:mitigated": "tsx src/cli/assess.ts --target=demo/targets/mitigated.yaml --out-dir=demo/out/mitigated",
+    "assess:demo:unavailable": "tsx src/cli/assess.ts --target=demo/targets/unavailable.yaml --out-dir=demo/out/unavailable",
+    "assess:demo:live:baseline": "tsx src/cli/assess.ts --target=demo/targets/baseline.yaml --out-dir=demo/out/live-baseline",
+    "assess:demo:live:mitigated": "tsx src/cli/assess.ts --target=demo/targets/mitigated.yaml --out-dir=demo/out/live-mitigated",
+    "dashboard": "node dashboard/server.js",
+    "server": "tsx src/server/server.ts",
+    "demo": "tsx demo/server.ts",
+    "demo:offline": "tsx demo/server.ts --offline"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "yaml": "2.6.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^3.2.4"
+  }
+}

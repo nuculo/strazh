@@ -1,0 +1,2919 @@
+import fsPromises from 'fs/promises';
+import * as path from 'path';
+
+import { Command } from 'commander';
+import { afterEach, beforeEach, describe, expect, it, Mocked, vi } from 'vitest';
+import { disableCache } from '../../src/cache';
+import cliState from '../../src/cliState';
+import {
+  doEval as commandDoEval,
+  EvalCommandSchema as commandEvalCommandSchema,
+  EvalRunError as commandEvalRunError,
+  showRedteamProviderLabelMissingWarning as commandShowRedteamProviderLabelMissingWarning,
+  evalCommand,
+} from '../../src/commands/eval';
+import { evaluate, PromptSuggestionsRejectedError } from '../../src/evaluator';
+import {
+  checkEmailStatusAndMaybeExit,
+  EmailValidationError,
+  getAuthor,
+  promptForEmailUnverified,
+} from '../../src/globalConfig/accounts';
+import { cloudConfig } from '../../src/globalConfig/cloud';
+import logger from '../../src/logger';
+import { runDbMigrations } from '../../src/migrate';
+import Eval from '../../src/models/eval';
+import {
+  doEval,
+  EvalCommandSchema,
+  EvalRunError,
+  showRedteamProviderLabelMissingWarning,
+} from '../../src/node/doEval';
+import {
+  deleteErrorResults,
+  getErrorResultIds,
+  recalculatePromptMetrics,
+} from '../../src/node/retry';
+import { loadApiProvider } from '../../src/providers/index';
+import { createShareableUrl, isSharingEnabled } from '../../src/share';
+import { generateTable } from '../../src/table';
+import {
+  ConfigPermissionError,
+  checkCloudPermissions,
+  getEvalConfigFromCloud,
+} from '../../src/util/cloud';
+import * as defaultConfigModule from '../../src/util/config/default';
+import { ConfigResolutionError, resolveConfigs } from '../../src/util/config/load';
+import { writeMultipleOutputs } from '../../src/util/index';
+import { checkProviderApiKeys } from '../../src/util/provider';
+import { TokenUsageTracker } from '../../src/util/tokenUsage';
+
+import type { ApiProvider, TestSuite, UnifiedConfig } from '../../src/types/index';
+
+vi.mock('../../src/cache');
+vi.mock('../../src/evaluator');
+vi.mock('../../src/globalConfig/accounts');
+vi.mock('../../src/globalConfig/cloud', async (importOriginal) => {
+  return {
+    ...(await importOriginal()),
+
+    cloudConfig: {
+      isEnabled: vi.fn().mockReturnValue(false),
+      getApiHost: vi.fn().mockReturnValue('https://api.promptfoo.app'),
+      getSharing: vi.fn().mockReturnValue(undefined),
+    },
+  };
+});
+vi.mock('../../src/migrate');
+vi.mock('../../src/node/retry', () => ({
+  deleteErrorResults: vi.fn(),
+  getErrorResultIds: vi.fn(),
+  recalculatePromptMetrics: vi.fn(),
+}));
+vi.mock('../../src/providers');
+vi.mock('../../src/redteam/shared', async (importOriginal) => {
+  return {
+    ...(await importOriginal()),
+  };
+});
+vi.mock('../../src/share');
+vi.mock('../../src/table');
+vi.mock('../../src/util/cloud', async () => ({
+  ...(await vi.importActual('../../src/util/cloud')),
+  getDefaultTeam: vi.fn().mockResolvedValue({ id: 'test-team-id', name: 'Test Team' }),
+  checkCloudPermissions: vi.fn().mockResolvedValue(undefined),
+  getEvalConfigFromCloud: vi.fn(),
+}));
+vi.mock('fs');
+vi.mock('path', async () => {
+  const actualPath = await vi.importActual('path');
+  return {
+    ...actualPath,
+  };
+});
+const chokidarMocks = vi.hoisted(() => {
+  const handlers = new Map<string, (...args: any[]) => unknown>();
+  const watcher = {
+    on: vi.fn((event: string, handler: (...args: any[]) => unknown) => {
+      handlers.set(event, handler);
+      return watcher;
+    }),
+  };
+
+  return {
+    handlers,
+    watcher,
+    watch: vi.fn(() => watcher),
+  };
+});
+
+vi.mock('chokidar', () => ({
+  default: {
+    watch: chokidarMocks.watch,
+  },
+}));
+vi.mock('../../src/util/config/load', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/util/config/load')>()),
+  resolveConfigs: vi.fn(),
+}));
+vi.mock('../../src/util/index', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/util/index')>()),
+  writeMultipleOutputs: vi.fn(),
+}));
+vi.mock('../../src/util/tokenUsage');
+vi.mock('../../src/util/provider', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/util/provider')>()),
+  checkProviderApiKeys: vi.fn(() => new Map<string, string[]>()),
+}));
+vi.mock('../../src/database/index', async (importOriginal) => {
+  const dbMock = {
+    insert: vi.fn(() => ({
+      values: vi.fn(() => ({
+        onConflictDoNothing: vi.fn(() => ({
+          run: vi.fn(),
+        })),
+        run: vi.fn(),
+      })),
+    })),
+    update: vi.fn(() => ({
+      set: vi.fn(() => ({
+        where: vi.fn(() => ({
+          run: vi.fn(),
+        })),
+      })),
+    })),
+  };
+
+  return {
+    ...(await importOriginal()),
+
+    getDb: vi.fn(() => ({
+      ...dbMock,
+      transaction: vi.fn((fn) => fn(dbMock)),
+    })),
+  };
+});
+
+describe('eval command compatibility exports', () => {
+  it('preserves the established command-module runtime exports', () => {
+    expect(commandDoEval).toBe(doEval);
+    expect(commandEvalCommandSchema).toBe(EvalCommandSchema);
+    expect(commandEvalRunError).toBe(EvalRunError);
+    expect(commandShowRedteamProviderLabelMissingWarning).toBe(
+      showRedteamProviderLabelMissingWarning,
+    );
+  });
+});
+
+describe('evalCommand', () => {
+  let program: Command;
+  const defaultConfig = {} as UnifiedConfig;
+  const defaultConfigPath = 'config.yaml';
+
+  beforeEach(() => {
+    program = new Command();
+    vi.clearAllMocks();
+    cliState.resume = false;
+    cliState.retryMode = false;
+    cliState._retryErrorResultIds = undefined;
+    chokidarMocks.handlers.clear();
+    chokidarMocks.watcher.on
+      .mockReset()
+      .mockImplementation((event: string, handler: (...args: any[]) => unknown) => {
+        chokidarMocks.handlers.set(event, handler);
+        return chokidarMocks.watcher;
+      });
+    chokidarMocks.watch.mockReset().mockReturnValue(chokidarMocks.watcher);
+    vi.mocked(cloudConfig.getSharing).mockReset();
+    vi.mocked(cloudConfig.getSharing).mockReturnValue(undefined);
+    vi.mocked(getEvalConfigFromCloud).mockReset();
+    vi.mocked(generateTable).mockReset();
+    vi.mocked(resolveConfigs).mockResolvedValue({
+      config: defaultConfig,
+      testSuite: {
+        prompts: [],
+        providers: [],
+      },
+      basePath: path.resolve('/'),
+    });
+    vi.mocked(getAuthor).mockReturnValue(null);
+    vi.mocked(promptForEmailUnverified).mockResolvedValue({ emailNeedsValidation: false });
+    vi.mocked(checkEmailStatusAndMaybeExit).mockResolvedValue('ok');
+    vi.mocked(deleteErrorResults).mockResolvedValue(undefined);
+    vi.mocked(getErrorResultIds).mockResolvedValue([]);
+    vi.mocked(recalculatePromptMetrics).mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    cliState.resume = false;
+    cliState.retryMode = false;
+    cliState._retryErrorResultIds = undefined;
+  });
+
+  it('should create eval command with correct options', () => {
+    const cmd = evalCommand(program, defaultConfig, defaultConfigPath);
+    expect(cmd.name()).toBe('eval');
+    expect(cmd.description()).toBe('Evaluate prompts');
+  });
+
+  it('should have help option available', () => {
+    const cmd = evalCommand(program, defaultConfig, defaultConfigPath);
+    // The help option is automatically added by commander
+    const helpText = cmd.helpInformation();
+    expect(helpText).toContain('-h, --help');
+    expect(helpText).toContain('display help for command');
+  });
+
+  it('should mention cloud UUID support in --config option help text', () => {
+    const cmd = evalCommand(program, defaultConfig, defaultConfigPath);
+    const helpText = cmd.helpInformation();
+    expect(helpText).toContain(
+      'Path to configuration file or cloud config UUID. Automatically loads promptfooconfig.yaml',
+    );
+  });
+
+  it('should apply resolved author when --no-write is used', async () => {
+    const cmdObj = { table: false, write: false };
+    const config = {} as UnifiedConfig;
+    let capturedEvalRecord: Eval | undefined;
+
+    vi.mocked(resolveConfigs).mockResolvedValue({
+      config,
+      testSuite: {
+        prompts: [],
+        providers: [],
+      },
+      basePath: path.resolve('/'),
+    });
+    vi.mocked(getAuthor).mockReturnValue('ci-author@example.com');
+    vi.mocked(evaluate).mockImplementation(async (_testSuite, evalRecord) => {
+      capturedEvalRecord = evalRecord as Eval;
+      return evalRecord as Eval;
+    });
+
+    await doEval(cmdObj, config, defaultConfigPath, {});
+
+    expect(capturedEvalRecord?.author).toBe('ci-author@example.com');
+  });
+
+  it('should finalize streamed JSONL output after a successful CLI evaluation', async () => {
+    const cmdObj = { table: false, write: false, share: false };
+    const config = { outputPath: ['results.jsonl', 'results.json'] } as UnifiedConfig;
+
+    vi.mocked(resolveConfigs).mockResolvedValue({
+      config,
+      testSuite: {
+        prompts: [],
+        providers: [
+          {
+            id: () => 'echo',
+            label: 'selected-target',
+            callApi: vi.fn(),
+          } as ApiProvider,
+        ],
+      },
+      basePath: path.resolve('/'),
+    });
+    vi.mocked(evaluate).mockImplementation(async (_testSuite, evalRecord) => evalRecord as Eval);
+
+    await doEval(cmdObj, config, defaultConfigPath, {});
+
+    expect(writeMultipleOutputs).toHaveBeenCalledWith(
+      ['results.jsonl', 'results.json'],
+      expect.any(Eval),
+      null,
+    );
+  });
+
+  it('should finalize streamed JSONL output through recovery when CLI result persistence fails', async () => {
+    const cmdObj = { table: false, write: false, share: false };
+    const config = { outputPath: ['results.jsonl', 'results.json'] } as UnifiedConfig;
+
+    vi.mocked(resolveConfigs).mockResolvedValue({
+      config,
+      testSuite: {
+        prompts: [],
+        providers: [
+          {
+            id: () => 'echo',
+            label: 'selected-target',
+            callApi: vi.fn(),
+          } as ApiProvider,
+        ],
+      },
+      basePath: path.resolve('/'),
+    });
+    vi.mocked(evaluate).mockImplementation(async (_testSuite, evalRecord) => {
+      evalRecord.resultPersistenceFailed = true;
+      return evalRecord as Eval;
+    });
+
+    await doEval(cmdObj, config, defaultConfigPath, {});
+
+    expect(writeMultipleOutputs).toHaveBeenCalledWith(
+      ['results.jsonl', 'results.json'],
+      expect.any(Eval),
+      null,
+    );
+  });
+
+  it('should merge runtime tags over config tags', async () => {
+    const cmdObj = {
+      table: false,
+      write: false,
+      tags: {
+        env: 'ci',
+        run: '123',
+      },
+    };
+    const config = {
+      prompts: [],
+      providers: [],
+      tags: {
+        env: 'local',
+        suite: 'smoke',
+      },
+    } as UnifiedConfig;
+    let capturedEvalRecord: Eval | undefined;
+
+    vi.mocked(resolveConfigs).mockResolvedValue({
+      config,
+      testSuite: {
+        prompts: [],
+        providers: [],
+        tags: config.tags,
+      },
+      basePath: path.resolve('/'),
+    });
+    vi.mocked(evaluate).mockImplementation(async (_testSuite, evalRecord) => {
+      capturedEvalRecord = evalRecord as Eval;
+      return evalRecord as Eval;
+    });
+
+    await doEval(cmdObj, config, defaultConfigPath, {});
+
+    expect(capturedEvalRecord?.config.tags).toEqual({
+      env: 'ci',
+      run: '123',
+      suite: 'smoke',
+    });
+  });
+
+  it('should apply command-line tag defaults before explicit runtime tags', async () => {
+    const config = {
+      prompts: [],
+      providers: [],
+      tags: {
+        env: 'local',
+        suite: 'smoke',
+      },
+      commandLineOptions: {
+        tags: {
+          env: 'default',
+          source: 'config',
+        },
+      },
+    } as UnifiedConfig;
+    let capturedEvalRecord: Eval | undefined;
+
+    vi.mocked(resolveConfigs).mockResolvedValue({
+      config,
+      testSuite: {
+        prompts: [],
+        providers: [],
+        tags: config.tags,
+      },
+      basePath: path.resolve('/'),
+      commandLineOptions: config.commandLineOptions,
+    });
+    vi.mocked(evaluate).mockImplementation(async (_testSuite, evalRecord) => {
+      capturedEvalRecord = evalRecord as Eval;
+      return evalRecord as Eval;
+    });
+
+    await doEval(
+      {
+        table: false,
+        write: false,
+        tags: {
+          env: 'ci',
+          run: '123',
+        },
+      },
+      config,
+      defaultConfigPath,
+      {},
+    );
+
+    expect(capturedEvalRecord?.config.tags).toEqual({
+      env: 'ci',
+      run: '123',
+      source: 'config',
+      suite: 'smoke',
+    });
+  });
+
+  it('should parse repeated --tag options from Commander', async () => {
+    evalCommand(program, defaultConfig, defaultConfigPath);
+    vi.mocked(resolveConfigs).mockResolvedValue({
+      config: defaultConfig,
+      testSuite: {
+        prompts: [],
+        providers: [],
+        defaultTest: {},
+      },
+      basePath: path.resolve('/'),
+    });
+    vi.mocked(evaluate).mockImplementation(async (_testSuite, evalRecord) => evalRecord as Eval);
+
+    await program.parseAsync([
+      'node',
+      'test',
+      'eval',
+      '--no-table',
+      '--no-write',
+      '--tag',
+      'skill-version=1.2.3',
+      '--tag',
+      'run-id=abc123',
+    ]);
+
+    expect(vi.mocked(resolveConfigs).mock.calls.at(-1)?.[0]).toEqual(
+      expect.objectContaining({
+        tags: {
+          'run-id': 'abc123',
+          'skill-version': '1.2.3',
+        },
+      }),
+    );
+  });
+
+  it('should document the repeatable --tag option in help text', () => {
+    const cmd = evalCommand(program, defaultConfig, defaultConfigPath);
+    const helpText = cmd.helpInformation();
+
+    expect(helpText).toContain('--tag <key=value>');
+    expect(helpText).toContain('Set an eval tag in key=value format.');
+  });
+
+  it('should parse repeated --tag values, preserve embedded equals, and keep empty values', () => {
+    const cmd = evalCommand(program, defaultConfig, defaultConfigPath);
+
+    cmd.parseOptions([
+      '--tag',
+      'build=first',
+      '--tag',
+      'build=second',
+      '--tag',
+      'token=a=b',
+      '--tag',
+      'empty=',
+    ]);
+
+    expect(cmd.opts().tag).toEqual({
+      build: 'second',
+      token: 'a=b',
+      empty: '',
+    });
+  });
+
+  it.each(['invalid', '=value'])('should reject malformed --tag value %s', (tagValue) => {
+    const cmd = evalCommand(program, defaultConfig, defaultConfigPath);
+    cmd.exitOverride();
+
+    expect(() => cmd.parseOptions(['--tag', tagValue])).toThrow(
+      '--tag must be specified in key=value format.',
+    );
+  });
+
+  it('should load cloud eval config when config is a single UUID', async () => {
+    const cloudConfigUuid = '12345678-1234-4234-8234-123456789abc';
+    const cloudConfig = {
+      providers: [],
+      prompts: [],
+      tests: [],
+    } as UnifiedConfig;
+    const cmdObj = { config: [cloudConfigUuid] };
+
+    vi.mocked(getEvalConfigFromCloud).mockResolvedValue(cloudConfig);
+    const mockEvalRecord = new Eval(cloudConfig);
+    vi.mocked(evaluate).mockResolvedValue(mockEvalRecord);
+
+    await doEval(cmdObj, defaultConfig, defaultConfigPath, {});
+
+    expect(getEvalConfigFromCloud).toHaveBeenCalledWith(cloudConfigUuid);
+    expect(resolveConfigs).toHaveBeenCalledWith(
+      expect.objectContaining({ config: undefined }),
+      cloudConfig,
+    );
+  });
+
+  it('should bypass cloud eval config loading for local config paths', async () => {
+    const cmdObj = { config: ['./promptfooconfig.yaml'] };
+    const mockEvalRecord = new Eval(defaultConfig);
+    vi.mocked(evaluate).mockResolvedValue(mockEvalRecord);
+
+    await doEval(cmdObj, defaultConfig, defaultConfigPath, {});
+
+    expect(getEvalConfigFromCloud).not.toHaveBeenCalled();
+  });
+
+  it('should fail when multiple config values include a UUID', async () => {
+    const cloudConfigUuid = '12345678-1234-4234-8234-123456789abc';
+    const cmdObj = { config: [cloudConfigUuid, './promptfooconfig.yaml'] };
+
+    await expect(doEval(cmdObj, defaultConfig, defaultConfigPath, {})).rejects.toThrow(
+      'Cloud config UUID mode supports exactly one -c value. Use: promptfoo eval -c <cloud-config-uuid>',
+    );
+    expect(getEvalConfigFromCloud).not.toHaveBeenCalled();
+  });
+
+  it('should fail when --watch is used with cloud config UUID mode', async () => {
+    const cloudConfigUuid = '12345678-1234-4234-8234-123456789abc';
+    const cmdObj = { config: [cloudConfigUuid], watch: true };
+
+    await expect(doEval(cmdObj, defaultConfig, defaultConfigPath, {})).rejects.toThrow(
+      '--watch is not supported when using a cloud config UUID with -c. Use a local config file path for watch mode.',
+    );
+    expect(getEvalConfigFromCloud).not.toHaveBeenCalled();
+  });
+
+  it('should keep watching after config resolution fails on a file change', async () => {
+    const config = {
+      prompts: [],
+      providers: [],
+    } as UnifiedConfig;
+    const testSuite = {
+      prompts: [],
+      providers: [],
+    } as TestSuite;
+
+    vi.mocked(resolveConfigs)
+      .mockResolvedValueOnce({
+        config,
+        testSuite,
+        basePath: path.resolve('/'),
+      })
+      .mockRejectedValueOnce(new ConfigResolutionError('You must provide at least 1 prompt'));
+    vi.mocked(evaluate).mockImplementationOnce(
+      async (_testSuite, evalRecord) => evalRecord as Eval,
+    );
+    const loggerErrorSpy = vi.spyOn(logger, 'error').mockImplementation(() => logger);
+
+    try {
+      await doEval({ watch: true, write: false }, config, defaultConfigPath, {});
+
+      const onChange = chokidarMocks.handlers.get('change');
+      expect(onChange).toBeDefined();
+
+      await expect(onChange?.(defaultConfigPath)).resolves.toBeUndefined();
+
+      expect(loggerErrorSpy).toHaveBeenCalledWith('You must provide at least 1 prompt');
+      expect(resolveConfigs).toHaveBeenCalledTimes(2);
+    } finally {
+      loggerErrorSpy.mockRestore();
+    }
+  });
+
+  it('should keep watching after email validation fails on a file change', async () => {
+    const config = {
+      prompts: [],
+      providers: [],
+      redteam: { plugins: ['harmful'] as any },
+    } as UnifiedConfig;
+    const testSuite = {
+      prompts: [],
+      providers: [],
+      tests: [{ vars: { prompt: 'test' } }],
+    } as TestSuite;
+
+    vi.mocked(resolveConfigs).mockResolvedValue({
+      config,
+      testSuite,
+      basePath: path.resolve('/'),
+    });
+    vi.mocked(evaluate).mockImplementationOnce(
+      async (_testSuite, evalRecord) => evalRecord as Eval,
+    );
+    await doEval({ watch: true, write: false }, config, defaultConfigPath, {});
+
+    const onChange = chokidarMocks.handlers.get('change');
+    expect(onChange).toBeDefined();
+
+    vi.mocked(checkEmailStatusAndMaybeExit).mockRejectedValueOnce(
+      new EmailValidationError('email_verification_required', 'Please verify your email'),
+    );
+
+    await expect(onChange?.(defaultConfigPath)).resolves.toBeUndefined();
+    expect(resolveConfigs).toHaveBeenCalledTimes(2);
+  });
+
+  it('should keep watching after reusable eval failures on a file change', async () => {
+    const config = {
+      prompts: [],
+      providers: [],
+    } as UnifiedConfig;
+    const testSuite = {
+      prompts: [],
+      providers: [],
+    } as TestSuite;
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    const loggerErrorSpy = vi.spyOn(logger, 'error').mockImplementation(() => logger);
+
+    vi.mocked(resolveConfigs).mockResolvedValue({
+      config,
+      testSuite,
+      basePath: path.resolve('/'),
+    });
+    vi.mocked(evaluate).mockImplementationOnce(
+      async (_testSuite, evalRecord) => evalRecord as Eval,
+    );
+    vi.mocked(checkProviderApiKeys)
+      .mockReturnValueOnce(new Map())
+      .mockReturnValueOnce(new Map([['OPENAI_API_KEY', ['openai:gpt-4']]]));
+
+    try {
+      await doEval({ watch: true, write: false }, config, defaultConfigPath, {});
+
+      const onChange = chokidarMocks.handlers.get('change');
+      expect(onChange).toBeDefined();
+
+      await expect(onChange?.(defaultConfigPath)).resolves.toBeUndefined();
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        'Missing required API keys: OPENAI_API_KEY (openai:gpt-4)',
+      );
+      expect(process.exitCode).toBeUndefined();
+    } finally {
+      vi.mocked(checkProviderApiKeys).mockReturnValue(new Map());
+      loggerErrorSpy.mockRestore();
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it('should keep watching after suggested prompts are rejected on a file change', async () => {
+    const config = {
+      prompts: [],
+      providers: [],
+    } as UnifiedConfig;
+    const testSuite = {
+      prompts: [],
+      providers: [],
+    } as TestSuite;
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    const loggerErrorSpy = vi.spyOn(logger, 'error').mockImplementation(() => logger);
+
+    vi.mocked(resolveConfigs).mockResolvedValue({
+      config,
+      testSuite,
+      basePath: path.resolve('/'),
+    });
+    vi.mocked(evaluate)
+      .mockImplementationOnce(async (_testSuite, evalRecord) => evalRecord as Eval)
+      .mockRejectedValueOnce(new PromptSuggestionsRejectedError());
+
+    try {
+      await doEval({ watch: true, write: false }, config, defaultConfigPath, {
+        eventSource: 'library',
+      });
+
+      const onChange = chokidarMocks.handlers.get('change');
+      expect(onChange).toBeDefined();
+
+      await expect(onChange?.(defaultConfigPath)).resolves.toBeUndefined();
+      expect(loggerErrorSpy).toHaveBeenCalledTimes(1);
+      expect(process.exitCode).toBeUndefined();
+    } finally {
+      loggerErrorSpy.mockRestore();
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it('should fail with explicit cloud UUID error when cloud fetch fails', async () => {
+    const cloudConfigUuid = '12345678-1234-4234-8234-123456789abc';
+    const cmdObj = { config: [cloudConfigUuid] };
+
+    vi.mocked(getEvalConfigFromCloud).mockRejectedValueOnce(
+      new Error('Cloud config is not enabled'),
+    );
+
+    await expect(doEval(cmdObj, defaultConfig, defaultConfigPath, {})).rejects.toThrow(
+      `Failed to load cloud eval config "${cloudConfigUuid}". Cloud config is not enabled. Cloud UUID inputs do not fall back to local file paths. Check authentication and that the UUID exists.`,
+    );
+  });
+
+  it('should handle --no-cache option', async () => {
+    const cmdObj = { cache: false };
+    await doEval(cmdObj, defaultConfig, defaultConfigPath, {});
+    expect(disableCache).toHaveBeenCalledTimes(1);
+  });
+
+  it('should handle --write option', async () => {
+    const cmdObj = { write: true };
+    const mockEvalRecord = new Eval(defaultConfig);
+    vi.mocked(evaluate).mockResolvedValue(mockEvalRecord);
+
+    await doEval(cmdObj, defaultConfig, defaultConfigPath, {});
+    expect(runDbMigrations).toHaveBeenCalledTimes(1);
+  });
+
+  it('should expand directory config arguments before resolving config', async () => {
+    const cmdObj = { config: ['/suite'], write: false };
+    const statSpy = vi.spyOn(fsPromises, 'stat').mockResolvedValue({
+      isDirectory: () => true,
+    } as any);
+    const loadDefaultConfigSpy = vi
+      .spyOn(defaultConfigModule, 'loadDefaultConfig')
+      .mockResolvedValueOnce({
+        defaultConfig: { prompts: ['from-dir'] },
+        defaultConfigPath: '/suite/promptfooconfig.yaml',
+      } as any);
+
+    await doEval(cmdObj, defaultConfig, undefined, {});
+
+    expect(cmdObj.config).toEqual(['/suite/promptfooconfig.yaml']);
+    expect(resolveConfigs).toHaveBeenCalledWith(
+      expect.objectContaining({ config: ['/suite/promptfooconfig.yaml'] }),
+      expect.objectContaining({ prompts: ['from-dir'] }),
+    );
+
+    statSpy.mockRestore();
+    loadDefaultConfigSpy.mockRestore();
+  });
+
+  it('should preserve --config ordering when expanding a directory entry', async () => {
+    // combineConfigs applies configs in array order (later entries override earlier
+    // ones), so a directory must be resolved in place rather than moved to the end.
+    const cmdObj = { config: ['/base.yaml', '/suite', '/override.yaml'], write: false };
+    const statSpy = vi.spyOn(fsPromises, 'stat').mockImplementation(
+      async (target) =>
+        ({
+          isDirectory: () => target === '/suite',
+        }) as any,
+    );
+    const loadDefaultConfigSpy = vi
+      .spyOn(defaultConfigModule, 'loadDefaultConfig')
+      .mockResolvedValueOnce({
+        defaultConfig: { prompts: ['from-dir'] },
+        defaultConfigPath: '/suite/promptfooconfig.yaml',
+      } as any);
+
+    await doEval(cmdObj, defaultConfig, undefined, {});
+
+    // The resolved directory config stays in its original position, so /override.yaml
+    // still wins over it (regression: it used to be appended after /override.yaml).
+    expect(cmdObj.config).toEqual(['/base.yaml', '/suite/promptfooconfig.yaml', '/override.yaml']);
+    expect(resolveConfigs).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: ['/base.yaml', '/suite/promptfooconfig.yaml', '/override.yaml'],
+      }),
+      expect.objectContaining({ prompts: ['from-dir'] }),
+    );
+
+    statSpy.mockRestore();
+    loadDefaultConfigSpy.mockRestore();
+  });
+
+  it('should normalize a non-array config to an array before resolving a directory entry', async () => {
+    // Defensive: a non-Commander caller could pass config as a bare string. The directory
+    // resolution mutates the array in place, so a string must be normalized first (otherwise
+    // the in-place assignment throws in strict mode / corrupts the value).
+    const cmdObj = { config: '/suite' as unknown as string[], write: false };
+    const statSpy = vi.spyOn(fsPromises, 'stat').mockResolvedValue({
+      isDirectory: () => true,
+    } as any);
+    const loadDefaultConfigSpy = vi
+      .spyOn(defaultConfigModule, 'loadDefaultConfig')
+      .mockResolvedValueOnce({
+        defaultConfig: { prompts: ['from-dir'] },
+        defaultConfigPath: '/suite/promptfooconfig.yaml',
+      } as any);
+
+    await doEval(cmdObj, defaultConfig, undefined, {});
+
+    expect(cmdObj.config).toEqual(['/suite/promptfooconfig.yaml']);
+
+    statSpy.mockRestore();
+    loadDefaultConfigSpy.mockRestore();
+  });
+
+  it('should drop a config-less directory and continue with the remaining config files', async () => {
+    const cmdObj = { config: ['/empty-suite', '/base.yaml'], write: false };
+    const loggerWarnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => logger);
+    const statSpy = vi.spyOn(fsPromises, 'stat').mockImplementation(
+      async (target) =>
+        ({
+          isDirectory: () => target === '/empty-suite',
+        }) as any,
+    );
+    const loadDefaultConfigSpy = vi
+      .spyOn(defaultConfigModule, 'loadDefaultConfig')
+      .mockResolvedValueOnce({
+        defaultConfig: {},
+        defaultConfigPath: undefined,
+      } as any);
+
+    await doEval(cmdObj, defaultConfig, undefined, {});
+
+    expect(loggerWarnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('No configuration file found in directory: /empty-suite.'),
+    );
+    // The config-less directory is dropped: leaving it in the list would surface
+    // later as a confusing "Unsupported configuration file format" readConfig error.
+    expect(cmdObj.config).toEqual(['/base.yaml']);
+    expect(resolveConfigs).toHaveBeenCalledWith(
+      expect.objectContaining({ config: ['/base.yaml'] }),
+      expect.anything(),
+    );
+
+    loggerWarnSpy.mockClear();
+    statSpy.mockRestore();
+    loadDefaultConfigSpy.mockRestore();
+  });
+
+  it('should merge only the resolving directory config when another directory is config-less', async () => {
+    const cmdObj = { config: ['/resolves', '/empty-suite', '/base.yaml'], write: false };
+    const statSpy = vi.spyOn(fsPromises, 'stat').mockImplementation(
+      async (target) =>
+        ({
+          isDirectory: () => target === '/resolves' || target === '/empty-suite',
+        }) as any,
+    );
+    const loadDefaultConfigSpy = vi
+      .spyOn(defaultConfigModule, 'loadDefaultConfig')
+      .mockImplementation(async (dir?: string) =>
+        dir === '/resolves'
+          ? ({
+              defaultConfig: { prompts: ['from-resolving-dir'] },
+              defaultConfigPath: '/resolves/promptfooconfig.yaml',
+            } as any)
+          : ({
+              defaultConfig: { prompts: ['should-not-merge'] },
+              defaultConfigPath: undefined,
+            } as any),
+      );
+
+    await doEval(cmdObj, defaultConfig, undefined, {});
+
+    expect(cmdObj.config).toEqual(['/resolves/promptfooconfig.yaml', '/base.yaml']);
+    // Only the resolving directory's config is merged; the config-less directory
+    // contributes nothing even though loadDefaultConfig returned a payload for it.
+    const mergedDefaults = vi.mocked(resolveConfigs).mock.calls[0][1] as { prompts?: string[] };
+    expect(mergedDefaults.prompts).toEqual(['from-resolving-dir']);
+
+    statSpy.mockRestore();
+    loadDefaultConfigSpy.mockRestore();
+  });
+
+  it('should fail early when no config files remain after dropping config-less directories', async () => {
+    const cmdObj = { config: ['/empty-suite'], write: false };
+    const loggerWarnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => logger);
+    const statSpy = vi.spyOn(fsPromises, 'stat').mockResolvedValue({
+      isDirectory: () => true,
+    } as any);
+    const loadDefaultConfigSpy = vi
+      .spyOn(defaultConfigModule, 'loadDefaultConfig')
+      .mockResolvedValueOnce({
+        defaultConfig: {},
+        defaultConfigPath: undefined,
+      } as any);
+
+    await expect(doEval(cmdObj, defaultConfig, undefined, {})).rejects.toEqual(
+      expect.objectContaining({
+        name: 'EvalRunError',
+        exitCode: 1,
+        message: expect.stringContaining('No configuration file found in /empty-suite.'),
+      }),
+    );
+
+    expect(loggerWarnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('No configuration file found in directory: /empty-suite.'),
+    );
+    expect(resolveConfigs).not.toHaveBeenCalled();
+    expect(evaluate).not.toHaveBeenCalled();
+
+    loggerWarnSpy.mockClear();
+    statSpy.mockRestore();
+    loadDefaultConfigSpy.mockRestore();
+  });
+
+  it('should list every config-less directory when all of them are dropped', async () => {
+    const cmdObj = { config: ['/empty-a', '/empty-b'], write: false };
+    const loggerWarnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => logger);
+    const statSpy = vi.spyOn(fsPromises, 'stat').mockResolvedValue({
+      isDirectory: () => true,
+    } as any);
+    const loadDefaultConfigSpy = vi
+      .spyOn(defaultConfigModule, 'loadDefaultConfig')
+      .mockResolvedValue({
+        defaultConfig: {},
+        defaultConfigPath: undefined,
+      } as any);
+
+    await expect(doEval(cmdObj, defaultConfig, undefined, {})).rejects.toEqual(
+      expect.objectContaining({
+        name: 'EvalRunError',
+        message: expect.stringContaining('No configuration file found in /empty-a, /empty-b.'),
+      }),
+    );
+
+    expect(resolveConfigs).not.toHaveBeenCalled();
+    expect(evaluate).not.toHaveBeenCalled();
+
+    loggerWarnSpy.mockClear();
+    statSpy.mockRestore();
+    loadDefaultConfigSpy.mockRestore();
+  });
+
+  it('should throw without mutating process.exitCode for reusable callers', async () => {
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+
+    try {
+      await expect(
+        doEval(
+          { resume: true, retryErrors: true } as Parameters<typeof doEval>[0],
+          defaultConfig,
+          defaultConfigPath,
+          {},
+        ),
+      ).rejects.toEqual(
+        expect.objectContaining<EvalRunError>({
+          name: 'EvalRunError',
+          exitCode: 1,
+          message: 'Cannot use --resume and --retry-errors together. Please use one or the other.',
+        }),
+      );
+      expect(process.exitCode).toBeUndefined();
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it('should preserve CLI exit-code behavior for recoverable eval failures', async () => {
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    const loggerErrorSpy = vi.spyOn(logger, 'error').mockImplementation(() => logger);
+
+    try {
+      const result = await doEval(
+        { resume: true, retryErrors: true } as Parameters<typeof doEval>[0],
+        defaultConfig,
+        defaultConfigPath,
+        { eventSource: 'cli' },
+      );
+
+      expect(result.persisted).toBe(false);
+      expect(process.exitCode).toBe(1);
+      // The user-facing message must still reach the CLI; verifying it here so a
+      // future refactor of `failEvalRun` can't silently drop the chalk-red log.
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'Cannot use --resume and --retry-errors together. Please use one or the other.',
+        ),
+      );
+    } finally {
+      loggerErrorSpy.mockRestore();
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  const resumeRetryValidationCases: Array<{
+    name: string;
+    cmdObj: Parameters<typeof doEval>[0];
+    message: string;
+    messageFragment: string;
+  }> = [
+    {
+      name: 'resume + --no-write',
+      cmdObj: { resume: 'latest', write: false } as Parameters<typeof doEval>[0],
+      message:
+        'Cannot use --resume with --no-write. Resume functionality requires database persistence.',
+      messageFragment: 'Cannot use --resume with --no-write',
+    },
+    {
+      name: 'retry-errors + --no-write',
+      cmdObj: { retryErrors: true, write: false },
+      message:
+        'Cannot use --retry-errors with --no-write. Retry functionality requires database persistence.',
+      messageFragment: 'Cannot use --retry-errors with --no-write',
+    },
+    {
+      name: 'resume + --tag',
+      cmdObj: { resume: 'latest', tags: { env: 'ci' } } as Parameters<typeof doEval>[0],
+      message: 'Cannot use --tag with --resume. Resumed evaluations keep their original tags.',
+      messageFragment: 'Cannot use --tag with --resume',
+    },
+    {
+      name: 'retry-errors + --tag',
+      cmdObj: { retryErrors: true, tags: { env: 'ci' } },
+      message:
+        'Cannot use --tag with --retry-errors. Retried evaluations keep their original tags.',
+      messageFragment: 'Cannot use --tag with --retry-errors',
+    },
+  ];
+
+  it.each(resumeRetryValidationCases)(
+    'throws EvalRunError for library callers: $name',
+    async ({ cmdObj, message }) => {
+      const previousExitCode = process.exitCode;
+      process.exitCode = undefined;
+
+      try {
+        await expect(doEval(cmdObj, defaultConfig, defaultConfigPath, {})).rejects.toEqual(
+          expect.objectContaining<EvalRunError>({ name: 'EvalRunError', exitCode: 1, message }),
+        );
+        expect(process.exitCode).toBeUndefined();
+      } finally {
+        process.exitCode = previousExitCode;
+      }
+    },
+  );
+
+  it.each(resumeRetryValidationCases)(
+    'logs to CLI and sets exitCode for: $name',
+    async ({ cmdObj, messageFragment }) => {
+      const previousExitCode = process.exitCode;
+      process.exitCode = undefined;
+      const loggerErrorSpy = vi.spyOn(logger, 'error').mockImplementation(() => logger);
+
+      try {
+        const result = await doEval(cmdObj, defaultConfig, defaultConfigPath, {
+          eventSource: 'cli',
+        });
+
+        expect(result.persisted).toBe(false);
+        expect(process.exitCode).toBe(1);
+        expect(loggerErrorSpy).toHaveBeenCalledWith(expect.stringContaining(messageFragment));
+      } finally {
+        loggerErrorSpy.mockRestore();
+        process.exitCode = previousExitCode;
+      }
+    },
+  );
+
+  it('throws EvalRunError with all missing keys joined for library callers', async () => {
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    vi.mocked(checkProviderApiKeys).mockReturnValueOnce(
+      new Map([
+        ['OPENAI_API_KEY', ['openai:gpt-4']],
+        ['ANTHROPIC_API_KEY', ['anthropic:claude']],
+      ]),
+    );
+
+    try {
+      await expect(doEval({}, defaultConfig, defaultConfigPath, {})).rejects.toEqual(
+        expect.objectContaining<EvalRunError>({
+          name: 'EvalRunError',
+          exitCode: 1,
+          message: expect.stringContaining(
+            'Missing required API keys: OPENAI_API_KEY (openai:gpt-4); ANTHROPIC_API_KEY (anthropic:claude)',
+          ),
+        }),
+      );
+      expect(process.exitCode).toBeUndefined();
+    } finally {
+      vi.mocked(checkProviderApiKeys).mockReturnValue(new Map());
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it('logs per-key error lines for CLI callers when API keys are missing', async () => {
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    const loggerErrorSpy = vi.spyOn(logger, 'error').mockImplementation(() => logger);
+    vi.mocked(checkProviderApiKeys).mockReturnValueOnce(
+      new Map([['OPENAI_API_KEY', ['openai:gpt-4']]]),
+    );
+
+    try {
+      const result = await doEval({}, defaultConfig, defaultConfigPath, { eventSource: 'cli' });
+
+      expect(result.persisted).toBe(false);
+      expect(process.exitCode).toBe(1);
+      expect(checkProviderApiKeys).toHaveBeenCalledWith(expect.any(Array), {
+        useDescriptions: true,
+      });
+      // Ensures the per-key list, the empty-line spacers, and the --env-file
+      // hint all reach the user. A regression that strips any of these would
+      // have been silent before this test.
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Missing OPENAI_API_KEY (openai:gpt-4)'),
+      );
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('To fix, set the environment variable'),
+      );
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('export OPENAI_API_KEY=your-api-key-here'),
+      );
+    } finally {
+      vi.mocked(checkProviderApiKeys).mockReturnValue(new Map());
+      loggerErrorSpy.mockRestore();
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it('should register SIGINT for CLI invocations writing to the database', async () => {
+    const processOnSpy = vi.spyOn(process, 'on');
+    const mockEvalRecord = new Eval(defaultConfig);
+    vi.mocked(evaluate).mockResolvedValueOnce(mockEvalRecord);
+
+    try {
+      await doEval({ write: true }, defaultConfig, defaultConfigPath, { eventSource: 'cli' });
+
+      const sigintCalls = processOnSpy.mock.calls.filter(([event]) => event === 'SIGINT');
+      expect(sigintCalls.length).toBeGreaterThan(0);
+    } finally {
+      processOnSpy.mockRestore();
+    }
+  });
+
+  it('should leave SIGINT ownership with reusable callers', async () => {
+    const processOnSpy = vi.spyOn(process, 'on');
+    const mockEvalRecord = new Eval(defaultConfig);
+    vi.mocked(evaluate).mockResolvedValueOnce(mockEvalRecord);
+
+    try {
+      await doEval({ write: true }, defaultConfig, defaultConfigPath, {});
+      const sigintCalls = processOnSpy.mock.calls.filter(([event]) => event === 'SIGINT');
+      expect(sigintCalls).toHaveLength(0);
+    } finally {
+      processOnSpy.mockRestore();
+    }
+  });
+
+  it('should pause CLI database evaluations on SIGINT and return the partial eval', async () => {
+    let sigintHandler: NodeJS.SignalsListener | undefined;
+    const processOnSpy = vi.spyOn(process, 'on').mockImplementation((event, listener) => {
+      if (event === 'SIGINT') {
+        sigintHandler = listener as NodeJS.SignalsListener;
+      }
+      return process;
+    });
+    const removeListenerSpy = vi.spyOn(process, 'removeListener').mockReturnValue(process);
+    vi.mocked(evaluate).mockImplementationOnce(async (_testSuite, evalRecord) => {
+      sigintHandler?.('SIGINT');
+      return evalRecord as Eval;
+    });
+
+    try {
+      const result = await doEval({ write: true }, defaultConfig, defaultConfigPath, {
+        eventSource: 'cli',
+      });
+
+      expect(result).toBeInstanceOf(Eval);
+      expect(result.persisted).toBe(true);
+      expect(removeListenerSpy).toHaveBeenCalledWith('SIGINT', expect.any(Function));
+    } finally {
+      processOnSpy.mockRestore();
+      removeListenerSpy.mockRestore();
+    }
+  });
+
+  it('should force exit if SIGINT pause shutdown times out', async () => {
+    vi.useFakeTimers();
+    let sigintHandler: NodeJS.SignalsListener | undefined;
+    const processOnSpy = vi.spyOn(process, 'on').mockImplementation((event, listener) => {
+      if (event === 'SIGINT') {
+        sigintHandler = listener as NodeJS.SignalsListener;
+      }
+      return process;
+    });
+    const removeListenerSpy = vi.spyOn(process, 'removeListener').mockReturnValue(process);
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    vi.mocked(evaluate).mockImplementationOnce(async (_testSuite, evalRecord) => {
+      sigintHandler?.('SIGINT');
+      await vi.advanceTimersByTimeAsync(10000);
+      return evalRecord as Eval;
+    });
+
+    try {
+      await doEval({ write: true }, defaultConfig, defaultConfigPath, { eventSource: 'cli' });
+
+      expect(exitSpy).toHaveBeenCalledWith(130);
+    } finally {
+      vi.useRealTimers();
+      processOnSpy.mockRestore();
+      removeListenerSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
+  });
+
+  it('should force exit immediately on a second SIGINT', async () => {
+    let sigintHandler: NodeJS.SignalsListener | undefined;
+    const processOnSpy = vi.spyOn(process, 'on').mockImplementation((event, listener) => {
+      if (event === 'SIGINT') {
+        sigintHandler = listener as NodeJS.SignalsListener;
+      }
+      return process;
+    });
+    const removeListenerSpy = vi.spyOn(process, 'removeListener').mockReturnValue(process);
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    vi.mocked(evaluate).mockImplementationOnce(async (_testSuite, evalRecord) => {
+      sigintHandler?.('SIGINT');
+      sigintHandler?.('SIGINT');
+      return evalRecord as Eval;
+    });
+
+    try {
+      await doEval({ write: true }, defaultConfig, defaultConfigPath, { eventSource: 'cli' });
+
+      expect(exitSpy).toHaveBeenCalledWith(130);
+    } finally {
+      processOnSpy.mockRestore();
+      removeListenerSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
+  });
+
+  it('preserves the just-completed Eval as cliFallback when watch mode cannot find configs', async () => {
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    const mockEvalRecord = new Eval(defaultConfig);
+    vi.mocked(evaluate).mockResolvedValueOnce(mockEvalRecord);
+
+    try {
+      const result = await doEval(
+        { watch: true, config: undefined } as Parameters<typeof doEval>[0],
+        defaultConfig,
+        undefined,
+        { eventSource: 'cli' },
+      );
+
+      // CLI summary code reads the returned Eval — must be the real run result,
+      // not a freshly-constructed empty Eval. A regression that drops cliFallback
+      // would silently mis-report 0 tests / 0 successes for watch failures.
+      expect(result).toBe(mockEvalRecord);
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it('throws EvalRunError for library callers when watch mode cannot find configs', async () => {
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    const mockEvalRecord = new Eval(defaultConfig);
+    vi.mocked(evaluate).mockResolvedValueOnce(mockEvalRecord);
+
+    try {
+      await expect(
+        doEval(
+          { watch: true, config: undefined } as Parameters<typeof doEval>[0],
+          defaultConfig,
+          undefined,
+          {},
+        ),
+      ).rejects.toEqual(
+        expect.objectContaining<EvalRunError>({
+          name: 'EvalRunError',
+          exitCode: 1,
+          message: expect.stringContaining('Could not locate config file(s) to watch'),
+        }),
+      );
+      expect(process.exitCode).toBeUndefined();
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it('should watch config-adjacent prompt, provider, and var files in watch mode', async () => {
+    const config = {
+      prompts: ['file://prompts/main.txt', { id: 'file://prompts/object.txt' }],
+      providers: ['file://providers/provider.yaml'],
+      tests: ['file://vars/scenario.yaml', { vars: { body: 'file://vars/body.txt', inline: 'x' } }],
+    } as UnifiedConfig;
+    vi.mocked(resolveConfigs).mockResolvedValueOnce({
+      config,
+      testSuite: {
+        prompts: [],
+        providers: [],
+      },
+      basePath: path.resolve('/suite'),
+    });
+    vi.mocked(evaluate).mockImplementationOnce(
+      async (_testSuite, evalRecord) => evalRecord as Eval,
+    );
+
+    await doEval(
+      { watch: true, config: ['/suite/promptfooconfig.yaml'], write: false },
+      config,
+      undefined,
+      {},
+    );
+
+    expect(chokidarMocks.watch).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        '/suite/promptfooconfig.yaml',
+        path.resolve('/suite', 'prompts/main.txt'),
+        path.resolve('/suite', 'prompts/object.txt'),
+        path.resolve('/suite', 'providers/provider.yaml'),
+        path.resolve('/suite', 'vars/scenario.yaml'),
+        path.resolve('/suite', 'vars/body.txt'),
+      ]),
+      { ignored: /^\./, persistent: true },
+    );
+
+    const loggerInfoSpy = vi.spyOn(logger, 'info').mockImplementation(() => logger);
+    chokidarMocks.handlers.get('ready')?.();
+    expect(loggerInfoSpy).toHaveBeenCalledWith(
+      'Watching for file changes on /suite/promptfooconfig.yaml ...',
+    );
+
+    const loggerErrorSpy = vi.spyOn(logger, 'error').mockImplementation(() => logger);
+    chokidarMocks.handlers.get('error')?.(new Error('watch failed'));
+    expect(loggerErrorSpy).toHaveBeenCalledWith('Watcher error: Error: watch failed');
+
+    loggerInfoSpy.mockRestore();
+    loggerErrorSpy.mockRestore();
+  });
+
+  it('should resume an existing eval with persisted prompts', async () => {
+    const resumeEval = new Eval({ prompts: [] } as UnifiedConfig);
+    resumeEval.prompts = [
+      { raw: 'saved prompt', label: 'Saved', config: { temperature: 0 } },
+    ] as any;
+    resumeEval.runtimeOptions = {
+      repeat: 2,
+      cache: false,
+      maxConcurrency: 2,
+      delay: 0,
+      providerFilter: 'selected-target',
+    };
+    const findByIdSpy = vi.spyOn(Eval, 'findById').mockResolvedValueOnce(resumeEval);
+    vi.mocked(resolveConfigs).mockResolvedValueOnce({
+      config: {} as UnifiedConfig,
+      testSuite: {
+        prompts: [],
+        providers: [
+          {
+            id: () => 'echo',
+            label: 'selected-target',
+            callApi: vi.fn(),
+          } as ApiProvider,
+        ],
+      },
+      basePath: path.resolve('/'),
+    });
+    vi.mocked(evaluate).mockImplementationOnce(async (testSuite, evalRecord, options) => {
+      expect(testSuite.prompts).toEqual([
+        { raw: 'saved prompt', label: 'Saved', config: { temperature: 0 } },
+      ]);
+      expect(options).toEqual(expect.objectContaining({ repeat: 2, cache: false }));
+      return evalRecord as Eval;
+    });
+
+    try {
+      const result = await doEval(
+        { resume: 'eval-123' } as Parameters<typeof doEval>[0],
+        defaultConfig,
+        defaultConfigPath,
+        {},
+      );
+
+      expect(result).toBe(resumeEval);
+      expect(findByIdSpy).toHaveBeenCalledWith('eval-123');
+      expect(resolveConfigs).toHaveBeenCalledWith(
+        { filterProviders: 'selected-target' },
+        resumeEval.config,
+      );
+    } finally {
+      findByIdSpy.mockRestore();
+    }
+  });
+
+  it('should retry error results from the latest eval and clean up after success', async () => {
+    const latestEval = new Eval({ prompts: [] } as UnifiedConfig);
+    latestEval.prompts = [{ raw: 'retry prompt', label: 'Retry', config: {} }] as any;
+    latestEval.runtimeOptions = { providerFilter: 'selected-target' };
+    const latestSpy = vi.spyOn(Eval, 'latest').mockResolvedValueOnce(latestEval);
+    vi.mocked(getErrorResultIds).mockResolvedValueOnce(['result-1', 'result-2']);
+    vi.mocked(resolveConfigs).mockResolvedValueOnce({
+      config: {} as UnifiedConfig,
+      testSuite: {
+        prompts: [],
+        providers: [
+          {
+            id: () => 'echo',
+            label: 'selected-target',
+            callApi: vi.fn(),
+          } as ApiProvider,
+        ],
+      },
+      basePath: path.resolve('/'),
+    });
+    vi.mocked(evaluate).mockImplementationOnce(async (testSuite, evalRecord) => {
+      expect(testSuite.prompts).toEqual([{ raw: 'retry prompt', label: 'Retry', config: {} }]);
+      return evalRecord as Eval;
+    });
+
+    try {
+      const result = await doEval({ retryErrors: true }, defaultConfig, defaultConfigPath, {});
+
+      expect(result).toBe(latestEval);
+      expect(latestSpy).toHaveBeenCalledTimes(1);
+      expect(resolveConfigs).toHaveBeenCalledWith(
+        { filterProviders: 'selected-target' },
+        latestEval.config,
+      );
+      expect(deleteErrorResults).toHaveBeenCalledWith(['result-1', 'result-2']);
+      expect(recalculatePromptMetrics).toHaveBeenCalledWith(latestEval);
+    } finally {
+      latestSpy.mockRestore();
+    }
+  });
+
+  it('should return the latest eval when retry-errors finds no error results', async () => {
+    const latestEval = new Eval({ prompts: [] } as UnifiedConfig);
+    const latestSpy = vi.spyOn(Eval, 'latest').mockResolvedValueOnce(latestEval);
+    vi.mocked(getErrorResultIds).mockResolvedValueOnce([]);
+
+    try {
+      const result = await doEval({ retryErrors: true }, defaultConfig, defaultConfigPath, {});
+
+      expect(result).toBe(latestEval);
+      expect(evaluate).not.toHaveBeenCalled();
+    } finally {
+      latestSpy.mockRestore();
+    }
+  });
+
+  it('should preserve error results when the stored provider filter matches no providers', async () => {
+    const latestEval = new Eval({ prompts: [] } as UnifiedConfig);
+    latestEval.runtimeOptions = { providerFilter: 'selected-target' };
+    const latestSpy = vi.spyOn(Eval, 'latest').mockResolvedValueOnce(latestEval);
+    vi.mocked(getErrorResultIds).mockResolvedValueOnce(['result-1']);
+    vi.mocked(resolveConfigs).mockResolvedValueOnce({
+      config: {} as UnifiedConfig,
+      testSuite: { prompts: [], providers: [] },
+      basePath: path.resolve('/'),
+    });
+
+    try {
+      await expect(
+        doEval({ retryErrors: true }, defaultConfig, defaultConfigPath, {}),
+      ).rejects.toThrow(
+        `Stored provider filter "selected-target" matched no providers while retrying errors for evaluation ${latestEval.id}`,
+      );
+
+      expect(evaluate).not.toHaveBeenCalled();
+      expect(deleteErrorResults).not.toHaveBeenCalled();
+      expect(recalculatePromptMetrics).not.toHaveBeenCalled();
+      expect(cliState.resume).toBe(false);
+      expect(cliState.retryMode).toBe(false);
+      expect(cliState._retryErrorResultIds).toBeUndefined();
+    } finally {
+      latestSpy.mockRestore();
+    }
+  });
+
+  it('should clear retry state when a stored provider filter cannot be resolved', async () => {
+    const latestEval = new Eval({ prompts: [] } as UnifiedConfig);
+    latestEval.runtimeOptions = { providerFilter: '[' };
+    const latestSpy = vi.spyOn(Eval, 'latest').mockResolvedValueOnce(latestEval);
+    vi.mocked(getErrorResultIds).mockResolvedValueOnce(['result-1']);
+
+    try {
+      await expect(
+        doEval({ retryErrors: true }, defaultConfig, defaultConfigPath, {}),
+      ).rejects.toThrow(
+        `Could not apply stored provider filter "[" while retrying errors for evaluation ${latestEval.id}: Invalid regular expression`,
+      );
+
+      // The pattern is validated before any config resolution happens.
+      expect(resolveConfigs).not.toHaveBeenCalled();
+      expect(evaluate).not.toHaveBeenCalled();
+      expect(deleteErrorResults).not.toHaveBeenCalled();
+      expect(cliState.resume).toBe(false);
+      expect(cliState.retryMode).toBe(false);
+      expect(cliState._retryErrorResultIds).toBeUndefined();
+    } finally {
+      latestSpy.mockRestore();
+    }
+  });
+
+  it('should fail closed when resuming and the stored provider filter matches no providers', async () => {
+    const resumeEval = new Eval({ prompts: [] } as UnifiedConfig);
+    resumeEval.runtimeOptions = { providerFilter: 'selected-target' };
+    const findByIdSpy = vi.spyOn(Eval, 'findById').mockResolvedValueOnce(resumeEval);
+    vi.mocked(resolveConfigs).mockResolvedValueOnce({
+      config: {} as UnifiedConfig,
+      testSuite: { prompts: [], providers: [] },
+      basePath: path.resolve('/'),
+    });
+
+    try {
+      await expect(
+        doEval(
+          { resume: 'eval-123' } as Parameters<typeof doEval>[0],
+          defaultConfig,
+          defaultConfigPath,
+          {},
+        ),
+      ).rejects.toThrow(
+        `Stored provider filter "selected-target" matched no providers while resuming evaluation ${resumeEval.id}`,
+      );
+
+      expect(evaluate).not.toHaveBeenCalled();
+      expect(cliState.resume).toBe(false);
+      expect(cliState.retryMode).toBe(false);
+    } finally {
+      findByIdSpy.mockRestore();
+    }
+  });
+
+  it('should fail closed when resuming and the stored provider filter is an invalid regex', async () => {
+    const resumeEval = new Eval({ prompts: [] } as UnifiedConfig);
+    resumeEval.runtimeOptions = { providerFilter: '[' };
+    const findByIdSpy = vi.spyOn(Eval, 'findById').mockResolvedValueOnce(resumeEval);
+
+    try {
+      await expect(
+        doEval(
+          { resume: 'eval-123' } as Parameters<typeof doEval>[0],
+          defaultConfig,
+          defaultConfigPath,
+          {},
+        ),
+      ).rejects.toThrow(
+        `Could not apply stored provider filter "[" while resuming evaluation ${resumeEval.id}: Invalid regular expression`,
+      );
+
+      expect(resolveConfigs).not.toHaveBeenCalled();
+      expect(evaluate).not.toHaveBeenCalled();
+      expect(cliState.resume).toBe(false);
+    } finally {
+      findByIdSpy.mockRestore();
+    }
+  });
+
+  it('should fail closed when a persisted provider filter is not a string', async () => {
+    const resumeEval = new Eval({ prompts: [] } as UnifiedConfig);
+    resumeEval.runtimeOptions = { providerFilter: ['selected-target'] as unknown as string };
+    const findByIdSpy = vi.spyOn(Eval, 'findById').mockResolvedValueOnce(resumeEval);
+
+    try {
+      await expect(
+        doEval(
+          { resume: 'eval-123' } as Parameters<typeof doEval>[0],
+          defaultConfig,
+          defaultConfigPath,
+          {},
+        ),
+      ).rejects.toThrow('Stored provider filter is invalid');
+
+      expect(resolveConfigs).not.toHaveBeenCalled();
+      expect(evaluate).not.toHaveBeenCalled();
+      expect(cliState.resume).toBe(false);
+    } finally {
+      findByIdSpy.mockRestore();
+    }
+  });
+
+  it('should warn when CLI provider filters are passed alongside --resume', async () => {
+    const resumeEval = new Eval({ prompts: [] } as UnifiedConfig);
+    resumeEval.runtimeOptions = { providerFilter: 'selected-target' };
+    const findByIdSpy = vi.spyOn(Eval, 'findById').mockResolvedValueOnce(resumeEval);
+    // Spy without replacing the implementation or restoring: another describe block in
+    // this file holds a module-level spy on logger.warn, and mockRestore() here would
+    // tear that spy down under random test ordering.
+    const warnSpy = vi.spyOn(logger, 'warn');
+    vi.mocked(resolveConfigs).mockResolvedValueOnce({
+      config: {} as UnifiedConfig,
+      testSuite: {
+        prompts: [],
+        providers: [
+          {
+            id: () => 'echo',
+            label: 'selected-target',
+            callApi: vi.fn(),
+          } as ApiProvider,
+        ],
+      },
+      basePath: path.resolve('/'),
+    });
+    vi.mocked(evaluate).mockImplementationOnce(async (_testSuite, evalRecord) => {
+      return evalRecord as Eval;
+    });
+
+    try {
+      await doEval(
+        { resume: 'eval-123', filterProviders: 'other-target' } as Parameters<typeof doEval>[0],
+        defaultConfig,
+        defaultConfigPath,
+        {},
+      );
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        `Ignoring --filter-providers/--filter-targets "other-target": resuming evaluation ${resumeEval.id} with stored provider filter "selected-target" to preserve test indices.`,
+      );
+      // The stored filter, not the CLI value, drives config resolution.
+      expect(resolveConfigs).toHaveBeenCalledWith(
+        { filterProviders: 'selected-target' },
+        resumeEval.config,
+      );
+    } finally {
+      warnSpy.mockClear();
+      findByIdSpy.mockRestore();
+    }
+  });
+
+  it('should preserve reusable caller event sources when invoking the evaluator', async () => {
+    const mockEvalRecord = new Eval(defaultConfig);
+    vi.mocked(evaluate).mockResolvedValueOnce(mockEvalRecord);
+
+    await doEval({}, defaultConfig, defaultConfigPath, { eventSource: 'mcp' });
+
+    expect(evaluate).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(Eval),
+      expect.objectContaining({ eventSource: 'mcp' }),
+    );
+  });
+
+  it('should keep CLI event sources for CLI invocations', async () => {
+    const mockEvalRecord = new Eval(defaultConfig);
+    vi.mocked(evaluate).mockResolvedValue(mockEvalRecord);
+
+    await doEval({}, defaultConfig, defaultConfigPath, { eventSource: 'cli' });
+
+    expect(evaluate).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(Eval),
+      expect.objectContaining({ eventSource: 'cli' }),
+    );
+  });
+
+  it('should set the configured failed-test exit code when CLI pass rate is too low', async () => {
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    vi.stubEnv('PROMPTFOO_PASS_RATE_THRESHOLD', '75');
+    vi.stubEnv('PROMPTFOO_FAILED_TEST_EXIT_CODE', '42');
+    const loggerInfoSpy = vi.spyOn(logger, 'info').mockImplementation(() => logger);
+    vi.mocked(evaluate).mockImplementationOnce(async (_testSuite, evalRecord) => {
+      (evalRecord as Eval).prompts = [
+        {
+          metrics: {
+            testPassCount: 1,
+            testFailCount: 1,
+            testErrorCount: 0,
+          },
+        },
+      ] as any;
+      return evalRecord as Eval;
+    });
+
+    try {
+      const result = await doEval({ write: false }, defaultConfig, defaultConfigPath, {
+        eventSource: 'cli',
+      });
+
+      expect(result).toBeInstanceOf(Eval);
+      expect(process.exitCode).toBe(42);
+      expect(loggerInfoSpy).toHaveBeenCalledWith(expect.stringContaining('Pass rate'));
+    } finally {
+      vi.unstubAllEnvs();
+      loggerInfoSpy.mockRestore();
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it('should await async provider cleanup after evaluation', async () => {
+    const cleanup = vi.fn().mockResolvedValue(undefined);
+    const provider = {
+      id: () => 'cleanup-provider',
+      callApi: async () => ({ output: 'ok' }),
+      cleanup,
+    } as ApiProvider;
+    vi.mocked(resolveConfigs).mockResolvedValueOnce({
+      config: {} as UnifiedConfig,
+      testSuite: {
+        prompts: [],
+        providers: [provider],
+      },
+      basePath: path.resolve('/'),
+    });
+    vi.mocked(evaluate).mockImplementationOnce(
+      async (_testSuite, evalRecord) => evalRecord as Eval,
+    );
+
+    await doEval({}, defaultConfig, defaultConfigPath, {});
+
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it('should handle redteam config', async () => {
+    const cmdObj = {};
+    const config = {
+      redteam: { plugins: ['test-plugin'] as any },
+      prompts: [],
+    } as UnifiedConfig;
+
+    vi.mocked(resolveConfigs).mockResolvedValue({
+      config,
+      testSuite: {
+        prompts: [],
+        providers: [],
+        tests: [{ vars: { test: 'value' } }],
+      },
+      basePath: path.resolve('/'),
+    });
+
+    const mockEvalRecord = new Eval(config);
+    vi.mocked(evaluate).mockResolvedValue(mockEvalRecord);
+
+    await doEval(cmdObj, config, defaultConfigPath, {});
+
+    expect(promptForEmailUnverified).toHaveBeenCalledTimes(1);
+    expect(checkEmailStatusAndMaybeExit).toHaveBeenCalledTimes(1);
+  });
+
+  it('should handle share option when enabled', async () => {
+    const cmdObj = { share: true };
+    const config = { sharing: true } as UnifiedConfig;
+    const evalRecord = new Eval(config);
+
+    vi.mocked(resolveConfigs).mockResolvedValue({
+      config,
+      testSuite: {
+        prompts: [],
+        providers: [],
+      },
+      basePath: path.resolve('/'),
+    });
+
+    vi.mocked(evaluate).mockResolvedValue(evalRecord);
+    vi.mocked(isSharingEnabled).mockImplementation(function () {
+      return true;
+    });
+    vi.mocked(createShareableUrl).mockResolvedValue('http://share.url');
+
+    await doEval(cmdObj, config, defaultConfigPath, {});
+
+    expect(createShareableUrl).toHaveBeenCalledWith(expect.any(Eval), { silent: true });
+  });
+
+  it('should not share when share is explicitly set to false even if config has sharing enabled', async () => {
+    const cmdObj = { share: false };
+    const config = { sharing: true } as UnifiedConfig;
+    const evalRecord = new Eval(config);
+
+    vi.mocked(resolveConfigs).mockResolvedValue({
+      config,
+      testSuite: {
+        prompts: [],
+        providers: [],
+      },
+      basePath: path.resolve('/'),
+    });
+
+    vi.mocked(evaluate).mockResolvedValue(evalRecord);
+    vi.mocked(isSharingEnabled).mockImplementation(function () {
+      return true;
+    });
+
+    await doEval(cmdObj, config, defaultConfigPath, {});
+
+    expect(createShareableUrl).not.toHaveBeenCalled();
+  });
+
+  it('should share when share is true even if config has no sharing enabled', async () => {
+    const cmdObj = { share: true };
+    const config = {} as UnifiedConfig;
+    const evalRecord = new Eval(config);
+
+    vi.mocked(resolveConfigs).mockResolvedValue({
+      config,
+      testSuite: {
+        prompts: [],
+        providers: [],
+      },
+      basePath: path.resolve('/'),
+    });
+
+    vi.mocked(evaluate).mockResolvedValue(evalRecord);
+    vi.mocked(isSharingEnabled).mockImplementation(function () {
+      return true;
+    });
+    vi.mocked(createShareableUrl).mockResolvedValue('http://share.url');
+
+    await doEval(cmdObj, config, defaultConfigPath, {});
+
+    expect(createShareableUrl).toHaveBeenCalledWith(expect.any(Eval), { silent: true });
+  });
+
+  it('should share when share is undefined and config has sharing enabled', async () => {
+    const cmdObj = {};
+    const config = { sharing: true } as UnifiedConfig;
+    const evalRecord = new Eval(config);
+
+    vi.mocked(resolveConfigs).mockResolvedValue({
+      config,
+      testSuite: {
+        prompts: [],
+        providers: [],
+      },
+      basePath: path.resolve('/'),
+    });
+
+    vi.mocked(evaluate).mockResolvedValue(evalRecord);
+    vi.mocked(isSharingEnabled).mockImplementation(function () {
+      return true;
+    });
+    vi.mocked(createShareableUrl).mockResolvedValue('http://share.url');
+
+    await doEval(cmdObj, config, defaultConfigPath, {});
+
+    expect(createShareableUrl).toHaveBeenCalledWith(expect.any(Eval), { silent: true });
+  });
+
+  it('should auto-share when connected to cloud even if sharing is not explicitly enabled', async () => {
+    const cmdObj = {};
+    const config = {} as UnifiedConfig; // No sharing config
+    const evalRecord = new Eval(config);
+
+    // Mock cloud config as enabled
+    vi.mocked(cloudConfig.isEnabled).mockImplementation(function () {
+      return true;
+    });
+
+    vi.mocked(resolveConfigs).mockResolvedValue({
+      config,
+      testSuite: {
+        prompts: [],
+        providers: [],
+      },
+      basePath: path.resolve('/'),
+    });
+
+    vi.mocked(evaluate).mockResolvedValue(evalRecord);
+    vi.mocked(isSharingEnabled).mockImplementation(function () {
+      return true;
+    });
+    vi.mocked(createShareableUrl).mockResolvedValue('http://share.url');
+
+    await doEval(cmdObj, config, defaultConfigPath, {});
+
+    expect(createShareableUrl).toHaveBeenCalledWith(expect.any(Eval), { silent: true });
+  });
+
+  it('should not auto-share when connected to cloud if share is explicitly set to false', async () => {
+    const cmdObj = { share: false };
+    const config = {} as UnifiedConfig;
+    const evalRecord = new Eval(config);
+
+    // Mock cloud config as enabled
+    vi.mocked(cloudConfig.isEnabled).mockImplementationOnce(function () {
+      return true;
+    });
+
+    vi.mocked(resolveConfigs).mockResolvedValue({
+      config,
+      testSuite: {
+        prompts: [],
+        providers: [],
+      },
+      basePath: path.resolve('/'),
+    });
+
+    vi.mocked(evaluate).mockResolvedValue(evalRecord);
+    vi.mocked(isSharingEnabled).mockImplementationOnce(function () {
+      return true;
+    });
+
+    await doEval(cmdObj, config, defaultConfigPath, {});
+
+    expect(createShareableUrl).not.toHaveBeenCalled();
+  });
+
+  it('should handle grader option', async () => {
+    const cmdObj = { grader: 'test-grader' };
+    const mockProvider = {
+      id: () => 'test-grader',
+      callApi: async () => ({ output: 'test' }),
+    } as ApiProvider;
+
+    vi.mocked(loadApiProvider).mockResolvedValue(mockProvider);
+
+    await doEval(cmdObj, defaultConfig, defaultConfigPath, {});
+
+    expect(loadApiProvider).toHaveBeenCalledWith('test-grader', expect.objectContaining({}));
+  });
+
+  it('should handle repeat option', async () => {
+    const cmdObj = { repeat: 3 };
+    await doEval(cmdObj, defaultConfig, defaultConfigPath, {});
+    expect(evaluate).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ repeat: 3 }),
+    );
+  });
+
+  it('should handle delay option', async () => {
+    const cmdObj = { delay: 1000 };
+    await doEval(cmdObj, defaultConfig, defaultConfigPath, {});
+    expect(evaluate).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ delay: 1000 }),
+    );
+  });
+
+  it('should handle maxConcurrency option', async () => {
+    const cmdObj = { maxConcurrency: 5 };
+    await doEval(cmdObj, defaultConfig, defaultConfigPath, {});
+    expect(evaluate).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ maxConcurrency: 5 }),
+    );
+  });
+
+  it('should pass tableCellMaxLength to the table renderer', async () => {
+    const config = {
+      commandLineOptions: {
+        tableCellMaxLength: 37,
+      },
+    } as UnifiedConfig;
+
+    vi.spyOn(Eval.prototype, 'getTable').mockResolvedValue({
+      head: { prompts: [], vars: [] },
+      body: [],
+    } as any);
+    vi.mocked(generateTable).mockReturnValue({ toString: () => 'rendered table' } as any);
+    vi.mocked(resolveConfigs).mockResolvedValue({
+      config,
+      testSuite: {
+        prompts: [],
+        providers: [],
+      },
+      basePath: path.resolve('/'),
+      commandLineOptions: config.commandLineOptions,
+    });
+    vi.mocked(evaluate).mockImplementation(async (_testSuite, evalRecord) => evalRecord as Eval);
+
+    await doEval({ table: true, write: false }, config, undefined, {});
+
+    expect(generateTable).toHaveBeenCalledWith(expect.anything(), 37);
+
+    vi.mocked(generateTable).mockClear();
+    await doEval({ table: true, tableCellMaxLength: 42, write: false }, config, undefined, {});
+
+    expect(generateTable).toHaveBeenCalledWith(expect.anything(), 42);
+  });
+
+  it('should use default tableCellMaxLength behavior when not provided in config or CLI', async () => {
+    const config = {
+      commandLineOptions: {},
+    } as UnifiedConfig;
+
+    vi.spyOn(Eval.prototype, 'getTable').mockResolvedValue({
+      head: { prompts: [], vars: [] },
+      body: [],
+    } as any);
+    vi.mocked(generateTable).mockReturnValue({ toString: () => 'rendered table' } as any);
+    vi.mocked(resolveConfigs).mockResolvedValue({
+      config,
+      testSuite: {
+        prompts: [],
+        providers: [],
+      },
+      basePath: path.resolve('/'),
+      commandLineOptions: config.commandLineOptions,
+    });
+    vi.mocked(evaluate).mockImplementation(async (_testSuite, evalRecord) => evalRecord as Eval);
+
+    await doEval({ table: true, write: false }, config, undefined, {});
+
+    expect(generateTable).toHaveBeenCalledWith(expect.anything(), undefined);
+  });
+
+  it('should fallback to evaluateOptions.maxConcurrency when cmdObj.maxConcurrency is undefined', async () => {
+    const cmdObj = {};
+    const evaluateOptions = { maxConcurrency: 3 };
+
+    await doEval(cmdObj, defaultConfig, defaultConfigPath, evaluateOptions);
+
+    expect(evaluate).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ maxConcurrency: 3 }),
+    );
+  });
+
+  it('should fallback to DEFAULT_MAX_CONCURRENCY when both cmdObj and evaluateOptions maxConcurrency are undefined', async () => {
+    const cmdObj = {};
+    const evaluateOptions = {};
+
+    await doEval(cmdObj, defaultConfig, defaultConfigPath, evaluateOptions);
+
+    expect(evaluate).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ maxConcurrency: 4 }),
+    );
+  });
+});
+
+describe('checkCloudPermissions', () => {
+  const defaultConfigPath = 'config.yaml';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(promptForEmailUnverified).mockResolvedValue({ emailNeedsValidation: false });
+    vi.mocked(checkEmailStatusAndMaybeExit).mockResolvedValue('ok');
+  });
+
+  it('should fail when checkCloudPermissions throws an error', async () => {
+    // Mock cloudConfig to be enabled
+    vi.mocked(cloudConfig.isEnabled).mockImplementation(function () {
+      return true;
+    });
+
+    // Mock checkCloudPermissions to throw an error
+    const permissionError = new ConfigPermissionError('Permission denied: insufficient access');
+    vi.mocked(checkCloudPermissions).mockRejectedValueOnce(permissionError);
+
+    // Setup the test configuration
+    const config = {
+      providers: ['openai:gpt-4'],
+    } as UnifiedConfig;
+
+    vi.mocked(resolveConfigs).mockResolvedValue({
+      config,
+      testSuite: {
+        prompts: [],
+        providers: [{ id: () => 'openai:gpt-4', callApi: async () => ({}) }] as ApiProvider[],
+        tests: [],
+      },
+      basePath: path.resolve('/'),
+    });
+
+    const cmdObj = {};
+
+    await expect(doEval(cmdObj, config, defaultConfigPath, {})).rejects.toThrow(
+      'Permission denied: insufficient access',
+    );
+
+    // Verify checkCloudPermissions was called with the correct arguments
+    expect(checkCloudPermissions).toHaveBeenCalledWith(config);
+
+    // Verify that evaluate was not called
+    expect(evaluate).not.toHaveBeenCalled();
+  });
+
+  it('should call checkCloudPermissions and proceed when it succeeds', async () => {
+    // Mock cloudConfig to be enabled
+    vi.mocked(cloudConfig.isEnabled).mockImplementation(function () {
+      return true;
+    });
+
+    // Mock checkCloudPermissions to succeed (resolve without throwing)
+    vi.mocked(checkCloudPermissions).mockResolvedValueOnce(undefined);
+
+    // Setup the test configuration
+    const config = {
+      providers: ['openai:gpt-4'],
+    } as UnifiedConfig;
+
+    vi.mocked(resolveConfigs).mockResolvedValue({
+      config,
+      testSuite: {
+        prompts: [],
+        providers: [{ id: () => 'openai:gpt-4', callApi: async () => ({}) }],
+        tests: [],
+      },
+      basePath: path.resolve('/'),
+    });
+
+    const mockEvalRecord = new Eval(config);
+    vi.mocked(evaluate).mockResolvedValue(mockEvalRecord);
+
+    const cmdObj = {};
+
+    const result = await doEval(cmdObj, config, defaultConfigPath, {});
+
+    // Verify checkCloudPermissions was called
+    expect(checkCloudPermissions).toHaveBeenCalledWith(config);
+
+    // Verify that the function proceeded normally
+    expect(result).not.toBeNull();
+
+    // Verify that evaluate was called
+    expect(evaluate).toHaveBeenCalled();
+  });
+
+  it('should call checkCloudPermissions but skip permission check when cloudConfig is disabled', async () => {
+    // Mock cloudConfig to be disabled
+    vi.mocked(cloudConfig.isEnabled).mockImplementation(function () {
+      return false;
+    });
+
+    // Mock checkCloudPermissions to succeed (it should return early due to disabled cloud)
+    vi.mocked(checkCloudPermissions).mockResolvedValueOnce(undefined);
+
+    // Setup the test configuration
+    const config = {
+      providers: ['openai:gpt-4'],
+    } as UnifiedConfig;
+
+    vi.mocked(resolveConfigs).mockResolvedValue({
+      config,
+      testSuite: {
+        prompts: [],
+        providers: [{ id: () => 'openai:gpt-4', callApi: async () => ({}) }],
+        tests: [],
+      },
+      basePath: path.resolve('/'),
+    });
+
+    const mockEvalRecord = new Eval(config);
+    vi.mocked(evaluate).mockResolvedValue(mockEvalRecord);
+
+    const cmdObj = {};
+
+    await doEval(cmdObj, config, defaultConfigPath, {});
+
+    // Verify checkCloudPermissions was called (but returns early due to disabled cloud)
+    expect(checkCloudPermissions).toHaveBeenCalledWith(config);
+
+    // Verify that evaluate was called
+    expect(evaluate).toHaveBeenCalled();
+  });
+});
+
+describe('showRedteamProviderLabelMissingWarning', () => {
+  const mockWarn = vi.spyOn(logger, 'warn');
+
+  beforeEach(() => {
+    mockWarn.mockClear();
+  });
+
+  it('should show warning when provider has no label', () => {
+    const testSuite = {
+      prompts: [],
+      providers: [
+        {
+          label: '',
+          id: () => 'test-id',
+          callApi: async () => ({ output: 'test' }),
+        },
+      ],
+    } as unknown as TestSuite;
+
+    showRedteamProviderLabelMissingWarning(testSuite);
+    expect(mockWarn).toHaveBeenCalledTimes(1);
+  });
+
+  it('should not show warning when all providers have labels', () => {
+    const testSuite = {
+      prompts: [],
+      providers: [
+        {
+          label: 'test-label',
+          id: () => 'test-id',
+          callApi: async () => ({ output: 'test' }),
+        },
+      ],
+    } as unknown as TestSuite;
+
+    showRedteamProviderLabelMissingWarning(testSuite);
+    expect(mockWarn).not.toHaveBeenCalled();
+  });
+
+  it('should handle empty providers array', () => {
+    const testSuite = {
+      prompts: [],
+      providers: [],
+    } as unknown as TestSuite;
+
+    showRedteamProviderLabelMissingWarning(testSuite);
+    expect(mockWarn).not.toHaveBeenCalled();
+  });
+});
+
+describe('Provider Token Tracking', () => {
+  let mockTokenUsageTracker: Mocked<TokenUsageTracker>;
+  const mockLogger = vi.spyOn(logger, 'info');
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockLogger.mockClear();
+
+    mockTokenUsageTracker = {
+      getProviderIds: vi.fn(),
+      getProviderUsage: vi.fn(),
+      trackUsage: vi.fn(),
+      resetAllUsage: vi.fn(),
+      resetProviderUsage: vi.fn(),
+      getTotalUsage: vi.fn(),
+      cleanup: vi.fn(),
+    } as any;
+
+    vi.mocked(TokenUsageTracker.getInstance).mockImplementation(function () {
+      return mockTokenUsageTracker;
+    });
+  });
+
+  it('should create and configure TokenUsageTracker correctly', () => {
+    const tracker = TokenUsageTracker.getInstance();
+    expect(tracker).toBeDefined();
+    expect(tracker.getProviderIds).toBeDefined();
+    expect(tracker.getProviderUsage).toBeDefined();
+  });
+
+  it('should handle provider token tracking when mocked properly', () => {
+    const providerUsageData = {
+      'openai:gpt-4': {
+        total: 1500,
+        prompt: 600,
+        completion: 900,
+        cached: 100,
+        numRequests: 5,
+        completionDetails: { reasoning: 200, acceptedPrediction: 0, rejectedPrediction: 0 },
+      },
+      'anthropic:claude-3': {
+        total: 800,
+        prompt: 300,
+        completion: 500,
+        cached: 50,
+        numRequests: 3,
+        completionDetails: { reasoning: 100, acceptedPrediction: 0, rejectedPrediction: 0 },
+      },
+    };
+
+    mockTokenUsageTracker.getProviderIds.mockReturnValue(['openai:gpt-4', 'anthropic:claude-3']);
+    mockTokenUsageTracker.getProviderUsage.mockImplementation(function (id: string) {
+      return providerUsageData[id as keyof typeof providerUsageData];
+    });
+
+    const tracker = TokenUsageTracker.getInstance();
+    const providerIds = tracker.getProviderIds();
+    expect(providerIds).toEqual(['openai:gpt-4', 'anthropic:claude-3']);
+
+    const openaiUsage = tracker.getProviderUsage('openai:gpt-4');
+    expect(openaiUsage).toEqual(providerUsageData['openai:gpt-4']);
+
+    const claudeUsage = tracker.getProviderUsage('anthropic:claude-3');
+    expect(claudeUsage).toEqual(providerUsageData['anthropic:claude-3']);
+  });
+});
+
+describe('doEval with external defaultTest', () => {
+  const defaultConfig = {} as UnifiedConfig;
+  const defaultConfigPath = 'config.yaml';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(resolveConfigs).mockResolvedValue({
+      config: defaultConfig,
+      testSuite: {
+        prompts: [],
+        providers: [],
+        defaultTest: undefined,
+      },
+      basePath: path.resolve('/'),
+    });
+    vi.mocked(promptForEmailUnverified).mockResolvedValue({ emailNeedsValidation: false });
+    vi.mocked(checkEmailStatusAndMaybeExit).mockResolvedValue('ok');
+  });
+
+  it('should handle grader option with string defaultTest', async () => {
+    const cmdObj = { grader: 'test-grader' };
+    const mockProvider = {
+      id: () => 'test-grader',
+      callApi: async () => ({ output: 'test' }),
+    } as ApiProvider;
+
+    vi.mocked(loadApiProvider).mockResolvedValue(mockProvider);
+
+    const testSuite = {
+      prompts: [],
+      providers: [],
+      defaultTest: 'file://defaultTest.yaml',
+    } as TestSuite;
+
+    vi.mocked(resolveConfigs).mockResolvedValue({
+      config: defaultConfig,
+      testSuite,
+      basePath: path.resolve('/'),
+    });
+
+    await doEval(cmdObj, defaultConfig, defaultConfigPath, {});
+
+    expect(evaluate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        defaultTest: expect.objectContaining({
+          options: expect.objectContaining({
+            provider: mockProvider,
+          }),
+        }),
+      }),
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it('should handle var option with string defaultTest', async () => {
+    const cmdObj = { var: { key: 'value' } };
+
+    const testSuite = {
+      prompts: [],
+      providers: [],
+      defaultTest: 'file://defaultTest.yaml',
+    } as TestSuite;
+
+    vi.mocked(resolveConfigs).mockResolvedValue({
+      config: defaultConfig,
+      testSuite,
+      basePath: path.resolve('/'),
+    });
+
+    await doEval(cmdObj, defaultConfig, defaultConfigPath, {});
+
+    expect(evaluate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        defaultTest: expect.objectContaining({
+          vars: expect.objectContaining({
+            key: 'value',
+          }),
+        }),
+      }),
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it('should handle both grader and var options with object defaultTest', async () => {
+    const cmdObj = {
+      grader: 'test-grader',
+      var: { key: 'value' },
+    };
+
+    const mockProvider = {
+      id: () => 'test-grader',
+      callApi: async () => ({ output: 'test' }),
+    } as ApiProvider;
+
+    vi.mocked(loadApiProvider).mockResolvedValue(mockProvider);
+
+    const testSuite = {
+      prompts: [],
+      providers: [],
+      defaultTest: {
+        options: {},
+        assert: [{ type: 'equals' as const, value: 'test' }],
+        vars: { existing: 'var' },
+      },
+    } as TestSuite;
+
+    vi.mocked(resolveConfigs).mockResolvedValue({
+      config: defaultConfig,
+      testSuite,
+      basePath: path.resolve('/'),
+    });
+
+    await doEval(cmdObj, defaultConfig, defaultConfigPath, {});
+
+    expect(evaluate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        defaultTest: expect.objectContaining({
+          assert: [{ type: 'equals', value: 'test' }],
+          vars: { existing: 'var', key: 'value' },
+          options: expect.objectContaining({
+            provider: mockProvider,
+          }),
+        }),
+      }),
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it('should not modify defaultTest when no grader or var options', async () => {
+    const cmdObj = {};
+
+    const originalDefaultTest = {
+      options: {},
+      assert: [{ type: 'equals' as const, value: 'test' }],
+      vars: { foo: 'bar' },
+    };
+
+    const testSuite = {
+      prompts: [],
+      providers: [],
+      defaultTest: originalDefaultTest,
+    } as TestSuite;
+
+    vi.mocked(resolveConfigs).mockResolvedValue({
+      config: defaultConfig,
+      testSuite,
+      basePath: path.resolve('/'),
+    });
+
+    await doEval(cmdObj, defaultConfig, defaultConfigPath, {});
+
+    expect(evaluate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        defaultTest: originalDefaultTest,
+      }),
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+});
+
+describe('Sharing Precedence - Comprehensive Test Coverage', () => {
+  const defaultConfigPath = '/path/to/config.yaml';
+  const defaultConfig = {
+    prompts: [],
+    providers: [],
+  } as UnifiedConfig;
+
+  let mockTokenUsageTracker: Mocked<TokenUsageTracker>;
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+
+    // Set up TokenUsageTracker mock - required by generateEvalSummary
+    mockTokenUsageTracker = {
+      getProviderIds: vi.fn().mockReturnValue([]),
+      getProviderUsage: vi.fn(),
+      trackUsage: vi.fn(),
+      resetAllUsage: vi.fn(),
+      resetProviderUsage: vi.fn(),
+      getTotalUsage: vi.fn(),
+      cleanup: vi.fn(),
+    } as any;
+    vi.mocked(TokenUsageTracker.getInstance).mockReturnValue(mockTokenUsageTracker);
+
+    // Set up required account mocks
+    vi.mocked(promptForEmailUnverified).mockResolvedValue({ emailNeedsValidation: false });
+    vi.mocked(checkEmailStatusAndMaybeExit).mockResolvedValue('ok');
+
+    // Set up cloud and sharing mocks
+    vi.mocked(cloudConfig.isEnabled).mockReturnValue(false);
+    vi.mocked(isSharingEnabled).mockReturnValue(true);
+    vi.mocked(createShareableUrl).mockResolvedValue('https://example.com/share/123');
+
+    // Set up config resolution
+    vi.mocked(resolveConfigs).mockResolvedValue({
+      config: defaultConfig,
+      testSuite: {
+        prompts: [],
+        providers: [],
+      },
+      basePath: path.resolve('/'),
+    });
+
+    // Set up cloud permissions check
+    vi.mocked(checkCloudPermissions).mockResolvedValue(undefined);
+
+    // resetAllMocks above wipes the module-level default; restore the empty-Map
+    // implementation so unrelated tests don't blow up reading `.size`.
+    vi.mocked(checkProviderApiKeys).mockReturnValue(new Map());
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  describe('Priority 1: Explicit disable (CLI --share=false, --no-share, or env var)', () => {
+    it('should not share when cmdObj.share = false, regardless of other settings', async () => {
+      const cmdObj = { share: false, table: false, write: false };
+      const config = { sharing: true } as UnifiedConfig;
+      const evalRecord = new Eval(config);
+
+      vi.mocked(cloudConfig.isEnabled).mockImplementation(function () {
+        return true;
+      });
+      vi.mocked(resolveConfigs).mockResolvedValue({
+        config,
+        testSuite: { prompts: [], providers: [] },
+        basePath: path.resolve('/'),
+        commandLineOptions: { share: true },
+      });
+      vi.mocked(evaluate).mockResolvedValue(evalRecord);
+
+      await doEval(cmdObj, config, defaultConfigPath, {});
+
+      expect(createShareableUrl).not.toHaveBeenCalled();
+    });
+
+    it('should not share when cmdObj.noShare = true, regardless of other settings', async () => {
+      const cmdObj = { noShare: true, table: false, write: false };
+      const config = { sharing: true } as UnifiedConfig;
+      const evalRecord = new Eval(config);
+
+      vi.mocked(cloudConfig.isEnabled).mockImplementation(function () {
+        return true;
+      });
+      vi.mocked(resolveConfigs).mockResolvedValue({
+        config,
+        testSuite: { prompts: [], providers: [] },
+        basePath: path.resolve('/'),
+        commandLineOptions: { share: true },
+      });
+      vi.mocked(evaluate).mockResolvedValue(evalRecord);
+
+      await doEval(cmdObj, config, defaultConfigPath, {});
+
+      expect(createShareableUrl).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Priority 2: Explicit enable via CLI --share=true', () => {
+    it('should share when cmdObj.share = true, overriding config.sharing = false', async () => {
+      const cmdObj = { share: true, table: false, write: false };
+      const config = { sharing: false } as UnifiedConfig;
+      const evalRecord = new Eval(config);
+
+      vi.mocked(cloudConfig.isEnabled).mockImplementation(function () {
+        return false;
+      });
+      vi.mocked(resolveConfigs).mockResolvedValue({
+        config,
+        testSuite: { prompts: [], providers: [] },
+        basePath: path.resolve('/'),
+      });
+      vi.mocked(evaluate).mockResolvedValue(evalRecord);
+
+      await doEval(cmdObj, config, defaultConfigPath, {});
+
+      expect(createShareableUrl).toHaveBeenCalledWith(expect.any(Eval), { silent: true });
+    });
+
+    it('should share when cmdObj.share = true, overriding commandLineOptions.share = false', async () => {
+      const cmdObj = { share: true, table: false, write: false };
+      const config = {} as UnifiedConfig;
+      const evalRecord = new Eval(config);
+
+      vi.mocked(cloudConfig.isEnabled).mockImplementation(function () {
+        return false;
+      });
+      vi.mocked(resolveConfigs).mockResolvedValue({
+        config,
+        testSuite: { prompts: [], providers: [] },
+        basePath: path.resolve('/'),
+        commandLineOptions: { share: false },
+      });
+      vi.mocked(evaluate).mockResolvedValue(evalRecord);
+
+      await doEval(cmdObj, config, defaultConfigPath, {});
+
+      expect(createShareableUrl).toHaveBeenCalledWith(expect.any(Eval), { silent: true });
+    });
+  });
+
+  describe('Priority 3: commandLineOptions.share from config file', () => {
+    it('should share when commandLineOptions.share = true, overriding config.sharing = false', async () => {
+      const cmdObj = { table: false, write: false };
+      const config = { sharing: false } as UnifiedConfig;
+      const evalRecord = new Eval(config);
+
+      vi.mocked(cloudConfig.isEnabled).mockImplementation(function () {
+        return false;
+      });
+      vi.mocked(resolveConfigs).mockResolvedValue({
+        config,
+        testSuite: { prompts: [], providers: [] },
+        basePath: path.resolve('/'),
+        commandLineOptions: { share: true },
+      });
+      vi.mocked(evaluate).mockResolvedValue(evalRecord);
+
+      await doEval(cmdObj, config, defaultConfigPath, {});
+
+      expect(createShareableUrl).toHaveBeenCalledWith(expect.any(Eval), { silent: true });
+    });
+
+    it('should not share when commandLineOptions.share = false, overriding cloud enabled', async () => {
+      const cmdObj = { table: false, write: false };
+      const config = {} as UnifiedConfig;
+      const evalRecord = new Eval(config);
+
+      vi.mocked(cloudConfig.isEnabled).mockImplementation(function () {
+        return true;
+      });
+      vi.mocked(resolveConfigs).mockResolvedValue({
+        config,
+        testSuite: { prompts: [], providers: [] },
+        basePath: path.resolve('/'),
+        commandLineOptions: { share: false },
+      });
+      vi.mocked(evaluate).mockResolvedValue(evalRecord);
+
+      await doEval(cmdObj, config, defaultConfigPath, {});
+
+      expect(createShareableUrl).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Priority 4: config.sharing from config file', () => {
+    it('should share when config.sharing = true', async () => {
+      const cmdObj = { table: false, write: false };
+      const config = { sharing: true } as UnifiedConfig;
+      const evalRecord = new Eval(config);
+
+      vi.mocked(cloudConfig.isEnabled).mockImplementation(function () {
+        return false;
+      });
+      vi.mocked(resolveConfigs).mockResolvedValue({
+        config,
+        testSuite: { prompts: [], providers: [] },
+        basePath: path.resolve('/'),
+      });
+      vi.mocked(evaluate).mockResolvedValue(evalRecord);
+
+      await doEval(cmdObj, config, defaultConfigPath, {});
+
+      expect(createShareableUrl).toHaveBeenCalledWith(expect.any(Eval), { silent: true });
+    });
+
+    it('should not share when config.sharing = false, overriding cloud enabled', async () => {
+      const cmdObj = { table: false, write: false };
+      const config = { sharing: false } as UnifiedConfig;
+      const evalRecord = new Eval(config);
+
+      vi.mocked(cloudConfig.isEnabled).mockImplementation(function () {
+        return true;
+      });
+      vi.mocked(resolveConfigs).mockResolvedValue({
+        config,
+        testSuite: { prompts: [], providers: [] },
+        basePath: path.resolve('/'),
+      });
+      vi.mocked(evaluate).mockResolvedValue(evalRecord);
+
+      await doEval(cmdObj, config, defaultConfigPath, {});
+
+      expect(createShareableUrl).not.toHaveBeenCalled();
+    });
+
+    it('should share when config.sharing is an object (custom API URL)', async () => {
+      const cmdObj = { table: false, write: false };
+      const config = { sharing: { apiBaseUrl: 'https://custom.api.url' } } as UnifiedConfig;
+      const evalRecord = new Eval(config);
+
+      vi.mocked(cloudConfig.isEnabled).mockImplementation(function () {
+        return false;
+      });
+      vi.mocked(resolveConfigs).mockResolvedValue({
+        config,
+        testSuite: { prompts: [], providers: [] },
+        basePath: path.resolve('/'),
+      });
+      vi.mocked(evaluate).mockResolvedValue(evalRecord);
+
+      await doEval(cmdObj, config, defaultConfigPath, {});
+
+      expect(createShareableUrl).toHaveBeenCalledWith(expect.any(Eval), { silent: true });
+    });
+  });
+
+  describe('Priority 5: Default to cloud auto-share when nothing explicitly set', () => {
+    it('should share when cloud is enabled and no other settings are specified', async () => {
+      const cmdObj = { table: false, write: false };
+      const config = {} as UnifiedConfig;
+      const evalRecord = new Eval(config);
+
+      vi.mocked(cloudConfig.isEnabled).mockImplementation(function () {
+        return true;
+      });
+      vi.mocked(resolveConfigs).mockResolvedValue({
+        config,
+        testSuite: { prompts: [], providers: [] },
+        basePath: path.resolve('/'),
+      });
+      vi.mocked(evaluate).mockResolvedValue(evalRecord);
+
+      await doEval(cmdObj, config, defaultConfigPath, {});
+
+      expect(createShareableUrl).toHaveBeenCalledWith(expect.any(Eval), { silent: true });
+    });
+
+    it('should not share when cloud is disabled and no other settings are specified', async () => {
+      const cmdObj = { table: false, write: false };
+      const config = {} as UnifiedConfig;
+      const evalRecord = new Eval(config);
+
+      vi.mocked(cloudConfig.isEnabled).mockImplementation(function () {
+        return false;
+      });
+      vi.mocked(resolveConfigs).mockResolvedValue({
+        config,
+        testSuite: { prompts: [], providers: [] },
+        basePath: path.resolve('/'),
+      });
+      vi.mocked(evaluate).mockResolvedValue(evalRecord);
+
+      await doEval(cmdObj, config, defaultConfigPath, {});
+
+      expect(createShareableUrl).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Edge cases and complex scenarios', () => {
+    it('should handle config.sharing = undefined explicitly (not just missing)', async () => {
+      const cmdObj = { table: false, write: false };
+      const config = { sharing: undefined } as UnifiedConfig;
+      const evalRecord = new Eval(config);
+
+      vi.mocked(cloudConfig.isEnabled).mockImplementation(function () {
+        return true;
+      });
+      vi.mocked(resolveConfigs).mockResolvedValue({
+        config,
+        testSuite: { prompts: [], providers: [] },
+        basePath: path.resolve('/'),
+      });
+      vi.mocked(evaluate).mockResolvedValue(evalRecord);
+
+      await doEval(cmdObj, config, defaultConfigPath, {});
+
+      expect(createShareableUrl).toHaveBeenCalledWith(expect.any(Eval), { silent: true });
+    });
+
+    it('should respect commandLineOptions.share = true even when config.sharing = false and cloud disabled', async () => {
+      const cmdObj = { table: false, write: false };
+      const config = { sharing: false } as UnifiedConfig;
+      const evalRecord = new Eval(config);
+
+      vi.mocked(cloudConfig.isEnabled).mockImplementation(function () {
+        return false;
+      });
+      vi.mocked(resolveConfigs).mockResolvedValue({
+        config,
+        testSuite: { prompts: [], providers: [] },
+        basePath: path.resolve('/'),
+        commandLineOptions: { share: true },
+      });
+      vi.mocked(evaluate).mockResolvedValue(evalRecord);
+
+      await doEval(cmdObj, config, defaultConfigPath, {});
+
+      expect(createShareableUrl).toHaveBeenCalledWith(expect.any(Eval), { silent: true });
+    });
+
+    it('should not call createShareableUrl when isSharingEnabled returns false', async () => {
+      const cmdObj = { share: true, table: false, write: false };
+      const config = {} as UnifiedConfig;
+      const evalRecord = new Eval(config);
+
+      vi.mocked(isSharingEnabled).mockImplementation(function () {
+        return false;
+      });
+      vi.mocked(resolveConfigs).mockResolvedValue({
+        config,
+        testSuite: { prompts: [], providers: [] },
+        basePath: path.resolve('/'),
+      });
+      vi.mocked(evaluate).mockResolvedValue(evalRecord);
+
+      await doEval(cmdObj, config, defaultConfigPath, {});
+
+      expect(createShareableUrl).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Full precedence verification matrix', () => {
+    const testMatrix = [
+      {
+        cmdShare: false,
+        cmdNoShare: undefined,
+        cloShare: undefined,
+        cfgShare: undefined,
+        cloudEnabled: false,
+        expectedToShare: false,
+        description: 'CLI --share=false blocks everything',
+      },
+      {
+        cmdShare: false,
+        cmdNoShare: undefined,
+        cloShare: true,
+        cfgShare: true,
+        cloudEnabled: true,
+        expectedToShare: false,
+        description: 'CLI --share=false overrides all other enables',
+      },
+      {
+        cmdShare: undefined,
+        cmdNoShare: true,
+        cloShare: true,
+        cfgShare: true,
+        cloudEnabled: true,
+        expectedToShare: false,
+        description: 'CLI --no-share overrides all other enables',
+      },
+      {
+        cmdShare: true,
+        cmdNoShare: undefined,
+        cloShare: false,
+        cfgShare: false,
+        cloudEnabled: false,
+        expectedToShare: true,
+        description: 'CLI --share=true overrides all disables',
+      },
+      {
+        cmdShare: undefined,
+        cmdNoShare: undefined,
+        cloShare: true,
+        cfgShare: false,
+        cloudEnabled: false,
+        expectedToShare: true,
+        description: 'commandLineOptions.share=true overrides config.sharing=false',
+      },
+      {
+        cmdShare: undefined,
+        cmdNoShare: undefined,
+        cloShare: false,
+        cfgShare: true,
+        cloudEnabled: true,
+        expectedToShare: false,
+        description: 'commandLineOptions.share=false overrides config and cloud',
+      },
+      {
+        cmdShare: undefined,
+        cmdNoShare: undefined,
+        cloShare: undefined,
+        cfgShare: true,
+        cloudEnabled: false,
+        expectedToShare: true,
+        description: 'config.sharing=true enables sharing',
+      },
+      {
+        cmdShare: undefined,
+        cmdNoShare: undefined,
+        cloShare: undefined,
+        cfgShare: false,
+        cloudEnabled: true,
+        expectedToShare: false,
+        description: 'config.sharing=false blocks cloud auto-share',
+      },
+      {
+        cmdShare: undefined,
+        cmdNoShare: undefined,
+        cloShare: undefined,
+        cfgShare: undefined,
+        cloudEnabled: true,
+        expectedToShare: true,
+        description: 'cloud enabled auto-shares when nothing set',
+      },
+      {
+        cmdShare: undefined,
+        cmdNoShare: undefined,
+        cloShare: undefined,
+        cfgShare: undefined,
+        cloudEnabled: false,
+        expectedToShare: false,
+        description: 'no sharing when nothing enables it',
+      },
+    ] as const;
+
+    testMatrix.forEach(
+      ({
+        cmdShare,
+        cmdNoShare,
+        cloShare,
+        cfgShare,
+        cloudEnabled,
+        expectedToShare,
+        description,
+      }) => {
+        it(description, async () => {
+          const cmdObj: any = { table: false, write: false };
+          if (cmdShare !== undefined) {
+            cmdObj.share = cmdShare;
+          }
+          if (cmdNoShare !== undefined) {
+            cmdObj.noShare = cmdNoShare;
+          }
+
+          const config = (cfgShare === undefined ? {} : { sharing: cfgShare }) as UnifiedConfig;
+          const evalRecord = new Eval(config);
+
+          // Use mockReturnValue for synchronous returns, mockResolvedValue for async
+          vi.mocked(cloudConfig.isEnabled).mockReturnValue(cloudEnabled);
+          vi.mocked(resolveConfigs).mockResolvedValue({
+            config,
+            testSuite: { prompts: [], providers: [] },
+            basePath: path.resolve('/'),
+            commandLineOptions: cloShare === undefined ? undefined : { share: cloShare },
+          });
+          vi.mocked(evaluate).mockResolvedValue(evalRecord);
+
+          await doEval(cmdObj, config, defaultConfigPath, {});
+
+          if (expectedToShare) {
+            expect(createShareableUrl).toHaveBeenCalledWith(expect.any(Eval), { silent: true });
+          } else {
+            expect(createShareableUrl).not.toHaveBeenCalled();
+          }
+        });
+      },
+    );
+  });
+});

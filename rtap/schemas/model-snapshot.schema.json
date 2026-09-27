@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rtap:model-snapshot",
+  "title": "SignedModelArtifact / ModelSnapshot",
+  "description": "FROZEN_INTEGRATION.md §9. FZM/FZA checksum/fingerprint establishes compatibility, not authenticity — sha256 + signature are mandatory.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "modelRef",
+    "format",
+    "formatVersion",
+    "sha256",
+    "signature",
+    "issuer",
+    "createdAt",
+    "coreFingerprint",
+    "featureSchemaVersion",
+    "taxonomyVersion",
+    "trainingDatasetRef",
+    "benchmarkRef",
+    "weightsRef"
+  ],
+  "properties": {
+    "modelRef": { "$ref": "rtap:common#/$defs/Id" },
+    "format": { "type": "string", "enum": ["FZM", "FZA"] },
+    "formatVersion": { "type": "integer", "minimum": 1 },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "signature": { "type": "string", "minLength": 1 },
+    "issuer": { "type": "string", "minLength": 1 },
+    "createdAt": { "$ref": "rtap:common#/$defs/Timestamp" },
+    "coreFingerprint": {
+      "type": "string",
+      "minLength": 1,
+      "description": "FNV-based compatibility fingerprint. Compatibility only — never used as the authenticity/replay digest, that's sha256."
+    },
+    "featureSchemaVersion": { "$ref": "rtap:common#/$defs/SchemaVersion" },
+    "taxonomyVersion": { "type": "string", "minLength": 1 },
+    "trainingDatasetRef": { "type": "string", "minLength": 1 },
+    "benchmarkRef": { "type": "string", "minLength": 1 },
+    "parentCoreRef": { "type": ["string", "null"] },
+    "weightsRef": {
+      "description": "грань №16: durable ArtifactStore pointer to this artifact's weights. null from packageLinearModelArtifact() (synchronous, no ArtifactStore access); populated by admitModel()'s async orchestration.",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["ref", "kind"],
+      "properties": {
+        "ref": { "type": "string", "pattern": "^local:sha256:[a-f0-9]{64}$" },
+        "kind": { "const": "model-weights" }
+      }
+    }
+  }
+}

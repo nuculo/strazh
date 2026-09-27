@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rtap:common",
+  "title": "RTAP common definitions",
+  "description": "Shared vocabulary. Source: wiki/Arch_Overlay/ARCHITECTURE.md §1 Ubiquitous Language.",
+  "$defs": {
+    "Verdict": {
+      "type": "string",
+      "enum": ["VULNERABLE", "RESISTANT", "UNVERIFIED", "ERROR"],
+      "description": "PASS/FAIL is not Published Language RTAP — ARCHITECTURE.md §6."
+    },
+    "TargetKind": {
+      "type": "string",
+      "enum": ["LLM_ENDPOINT", "AGENT", "REPOSITORY", "MODEL_ARTIFACT"]
+    },
+    "SchemaVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "Every wire object carries schema_version — ARCHITECTURE.md §3.1."
+    },
+    "Id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "Timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "SecretRef": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Target credentials are represented only as secret_ref, never inline — ARCHITECTURE.md §1, §7.2."
+    },
+    "EvidenceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "kind"],
+      "properties": {
+        "ref": { "type": "string", "minLength": 1 },
+        "kind": {
+          "type": "string",
+          "enum": ["payload", "response", "trace", "snippet", "native-report"]
+        }
+      },
+      "description": "Reference to a protected payload/response/trace/snippet/native report — never the raw bytes inline. ARCHITECTURE.md §1."
+    },
+    "NativeMetric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["namespace", "name", "value"],
+      "properties": {
+        "namespace": {
+          "type": "string",
+          "enum": ["promptfoo", "duo", "frozen"]
+        },
+        "name": { "type": "string", "minLength": 1 },
+        "value": { "type": "number" }
+      },
+      "description": "Namespaced metric; never auto-aggregated across namespaces — redteam.score/native-scores-are-never-averaged."
+    }
+  }
+}

@@ -1,0 +1,1 @@
+{ "name": "rtap-promptfoo-runtime", "private": true, "description": "Isolated pinned promptfoo runtime for RTAP M0 live proof. NOT part of RTAP deps.", "dependencies": { "promptfoo": "0.122.0" } }

@@ -1,0 +1,36 @@
+name: RTAP CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'rtap/**'
+      - '.github/workflows/rtap-ci.yml'
+  pull_request:
+    paths:
+      - 'rtap/**'
+      - '.github/workflows/rtap-ci.yml'
+
+# EXECUTION_SAFETY_RECOVERY.md §15 admission criterion 11: "the crash matrix runs
+# in CI with replayable seeds." `npm test` includes rtap/test/execution/
+# crash-kill-points.test.ts and every other crash/recovery scenario; `npm run laws`
+# runs the full Architecture Law Registry with its default replayable seed (1).
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rtap
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: rtap/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run laws
+      - run: npm run build
+      - run: npm audit --audit-level=high

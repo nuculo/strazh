@@ -1,0 +1,10 @@
+node_modules
+runs
+dist
+.env
+.env.*
+.git
+.agents
+m0/promptfoo-runtime/node_modules
+*.sqlite
+*.sqlite-journal

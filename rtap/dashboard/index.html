@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RTAP Assessment Results &mdash; Dashboard</title>
+    <meta name="description"
+        content="RedTeam Assessment Platform results dashboard displaying verified verdicts, coverage accounting, and out-of-band artifact references.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <div class="glass-background"></div>
+    <main class="container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="header-content">
+                <div class="header-badge">RTAP CONTROL PLANE</div>
+                <h1>Assessment Results</h1>
+                <p class="subtitle">RedTeam Assessment Platform &mdash; Target-specific findings, coverage verification
+                    &amp; out-of-band evidence tracking.</p>
+            </div>
+            <div class="header-actions">
+                <div class="quick-samples">
+                    <span class="quick-samples-label">Replay Prior Nebius (Derived):</span>
+                    <button type="button" id="btn-sample-derived-baseline" class="btn-sample btn-highlight"
+                        title="Replay Prior Live Baseline Corrected Evaluation (Direct: RESISTANT, Override: UNVERIFIED)">Replay: Baseline (Derived)</button>
+                    <button type="button" id="btn-sample-derived-mitigated" class="btn-sample btn-highlight"
+                        title="Replay Prior Live Mitigated Corrected Evaluation (Direct: RESISTANT, Override: UNVERIFIED)">Replay: Mitigated (Derived)</button>
+                    <span class="quick-samples-divider">|</span>
+                    <span class="quick-samples-label">Replay Prior Nebius (Pre-Fix):</span>
+                    <button type="button" id="btn-sample-live-baseline" class="btn-sample"
+                        title="Replay Prior Original Live Baseline Report (Pre-fix: flawed 2/2 RESISTANT)">Replay: Baseline (Pre-Fix)</button>
+                    <button type="button" id="btn-sample-live-mitigated" class="btn-sample"
+                        title="Replay Prior Original Live Mitigated Report (Pre-fix: flawed 2/2 RESISTANT)">Replay: Mitigated (Pre-Fix)</button>
+                    <span class="quick-samples-divider">|</span>
+                    <span class="quick-samples-label">Fixtures:</span>
+                    <button type="button" id="btn-sample-demo-unavailable" class="btn-sample"
+                        title="Replay Target Down (Incomplete Run / Transport Error)">Replay: Target Down</button>
+                    <button type="button" id="btn-sample-complete" class="btn-sample"
+                        title="Load local M1 completed assessment report fixture">Fixture: M1 Complete</button>
+                    <button type="button" id="btn-sample-sarif" class="btn-sample"
+                        title="Load local M1 SARIF 2.1.0 report fixture">Fixture: M1 SARIF</button>
+                </div>
+                <div class="file-loader">
+                    <label for="report-upload" class="upload-btn" id="upload-btn-label">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="17 8 12 3 7 8"></polyline>
+                            <line x1="12" y1="3" x2="12" y2="15"></line>
+                        </svg>
+                        <span>Load Report File</span>
+                    </label>
+                    <input type="file" id="report-upload" accept=".json,.sarif" class="visually-hidden">
+                </div>
+            </div>
+        </header>
+
+        <!-- Judge Demo Replay Notice Banner -->
+        <div class="judge-demo-notice-banner" role="region" aria-label="Demo replay notice">
+            <div class="notice-badge">JUDGE DEMO &bull; REPLAY MODE</div>
+            <div class="notice-text">
+                <strong>Replay of Prior Nebius Runs:</strong> The sample reports below are recorded, sanitized replays of prior live assessments against Nebius Token Factory (<code>nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B</code>). This public viewer performs <em>zero live inference</em> and stores no API keys. To run an active assessment with your own Nebius Token Factory API key, use the local CLI runbook.
+            </div>
+        </div>
+
+        <!-- Error & Alert Container -->
+        <div id="error-container" class="error-container hidden" role="alert">
+            <div class="error-icon">⚠️</div>
+            <div class="error-body">
+                <strong id="error-title">Notice:</strong>
+                <p id="error-message"></p>
+            </div>
+            <button type="button" id="btn-dismiss-error" class="btn-dismiss" aria-label="Dismiss">&times;</button>
+        </div>
+
+        <!-- Operator Live Assessment Console (Production MVP - strazh.dev) -->
+        <section id="operator-console" class="operator-console" aria-label="Operator Assessment Console">
+            <div class="console-header">
+                <div class="console-title-group">
+                    <span class="console-domain-badge">STRAZH.DEV &bull; OPERATOR CONSOLE</span>
+                    <h2>Authenticated Live Assessment</h2>
+                    <p class="console-subtitle">Trigger bounded assessments through the RTAP control plane against approved targets. Enforces concurrency limit (1), probe timeouts, and server-side kill switch.</p>
+                </div>
+                <div class="console-auth-status">
+                    <div id="auth-indicator" class="auth-indicator unauthenticated">
+                        <span class="status-dot"></span>
+                        <span id="auth-status-text">Checking Service...</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Login Bar (when unauthenticated) -->
+            <div id="operator-login-bar" class="operator-login-bar">
+                <div class="login-inputs">
+                    <label for="operator-token-input" class="visually-hidden">Operator Bearer Token</label>
+                    <input type="password" id="operator-token-input" class="operator-input mono" placeholder="Enter Operator Token (OPERATOR_TOKEN)" autocomplete="current-password">
+                    <button type="button" id="btn-operator-login" class="btn-primary-action">Sign In Operator</button>
+                </div>
+                <div class="login-hint">Credentials and Nebius API keys are kept strictly server-side. Configure OPERATOR_TOKEN in the server environment.</div>
+            </div>
+
+            <!-- Controls Bar (when authenticated) -->
+            <div id="operator-controls-bar" class="operator-controls-bar hidden">
+                <div class="controls-row">
+                    <div class="control-group">
+                        <label for="target-selector" class="control-label">Approved Target:</label>
+                        <select id="target-selector" class="target-select">
+                            <option value="" disabled selected>Loading approved targets...</option>
+                        </select>
+                    </div>
+                    <div class="control-actions">
+                        <button type="button" id="btn-start-assessment" class="btn-start-action">
+                            <span class="action-icon">▶</span>
+                            <span>Start Assessment</span>
+                        </button>
+                        <button type="button" id="btn-cancel-assessment" class="btn-cancel-action hidden" title="Kill switch: Terminate running assessment immediately">
+                            <span class="action-icon">⏹</span>
+                            <span>Kill Switch</span>
+                        </button>
+                        <button type="button" id="btn-operator-logout" class="btn-secondary-action">Sign Out</button>
+                    </div>
+                </div>
+                <div id="target-description-box" class="target-desc-box"></div>
+            </div>
+
+            <!-- Live Execution Status Bar (shown during/after assessment) -->
+            <div id="assessment-status-box" class="assessment-status-box hidden">
+                <div class="status-box-header">
+                    <div class="status-info">
+                        <span id="job-status-badge" class="badge badge-status">QUEUED</span>
+                        <span class="job-id-label">Run ID: <code id="job-run-id" class="mono">-</code></span>
+                        <span class="job-target-label">Target: <strong id="job-target-name">-</strong></span>
+                    </div>
+                    <div class="status-timer" id="job-elapsed-time">0s</div>
+                </div>
+                <div class="progress-bar-track">
+                    <div id="job-progress-fill" class="progress-bar-fill indeterminate"></div>
+                </div>
+                <div class="status-footer">
+                    <span id="job-status-message">Initializing RTAP assessment pipeline...</span>
+                    <div id="job-actions" class="job-actions hidden">
+                        <button type="button" id="btn-view-job-report" class="btn-small-action">Load Live Report</button>
+                        <a id="link-download-sarif" class="btn-small-link" target="_blank" rel="noopener">Download SARIF</a>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Empty State / Drop Zone -->
+        <div id="empty-state" class="empty-state drop-zone">
+            <div class="empty-icon-wrap">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"
+                    stroke-linecap="round" stroke-linejoin="round" class="empty-icon">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                    <line x1="16" y1="13" x2="8" y2="13"></line>
+                    <line x1="16" y1="17" x2="8" y2="17"></line>
+                    <polyline points="10 9 9 9 8 9"></polyline>
+                </svg>
+            </div>
+            <h2>No Assessment Report Loaded</h2>
+            <p>Select or drag and drop a real RTAP assessment <code>report.json</code> or <code>report.sarif</code> file
+                here.</p>
+            <div class="empty-actions">
+                <button type="button" id="btn-empty-upload" class="upload-btn primary-btn">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="17 8 12 3 7 8"></polyline>
+                        <line x1="12" y1="3" x2="12" y2="15"></line>
+                    </svg>
+                    Choose Report File
+                </button>
+                <div class="empty-quick-links">
+                    <div class="empty-quick-group">
+                        <span class="quick-links-group-label">Replay Prior Nebius (Derived):</span>
+                        <button type="button" id="btn-empty-derived-baseline" class="btn-link">Replay: Baseline (Derived)</button>
+                        &bull;
+                        <button type="button" id="btn-empty-derived-mitigated" class="btn-link">Replay: Mitigated (Derived)</button>
+                    </div>
+                    <div class="empty-quick-group">
+                        <span class="quick-links-group-label">Replay Prior Nebius (Pre-Fix):</span>
+                        <button type="button" id="btn-empty-live-baseline" class="btn-link">Replay: Baseline (Pre-Fix)</button>
+                        &bull;
+                        <button type="button" id="btn-empty-live-mitigated" class="btn-link">Replay: Mitigated (Pre-Fix)</button>
+                    </div>
+                    <div class="empty-quick-group">
+                        <span class="quick-links-group-label">Fixtures &amp; Test Exports:</span>
+                        <button type="button" id="btn-empty-demo-unavailable" class="btn-link">Replay: Target Down</button>
+                        &bull;
+                        <button type="button" id="btn-empty-sample-complete" class="btn-link">Fixture: M1 Complete</button>
+                        &bull;
+                        <button type="button" id="btn-empty-sample-sarif" class="btn-link">Fixture: M1 SARIF</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Report Content (populated on report load) -->
+        <div id="report-content" class="report-content hidden">
+            <!-- Summary & Coverage Details Card -->
+            <section class="summary-section fade-in" aria-labelledby="section-summary-title">
+                <div class="summary-card meta-card">
+                    <div class="card-header-bar">
+                        <h2 id="section-summary-title" class="card-title">Assessment Run Overview</h2>
+                        <span id="format-badge" class="badge format-badge">RTAP JSON</span>
+                    </div>
+                    <div class="meta-grid">
+                        <div class="meta-item">
+                            <span class="meta-label">Run ID</span>
+                            <div class="copyable-id-row">
+                                <span id="run-id" class="meta-value mono">-</span>
+                                <button type="button" id="btn-copy-run-id" class="btn-copy" title="Copy full Run ID"
+                                    aria-label="Copy full Run ID">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="meta-item">
+                            <span class="meta-label">Target ID</span>
+                            <span id="target-id" class="meta-value mono">-</span>
+                        </div>
+                        <div class="meta-item">
+                            <span class="meta-label">Generated Timestamp</span>
+                            <span id="timestamp" class="meta-value timestamp-val" title="">-</span>
+                        </div>
+                        <div class="meta-item">
+                            <span class="meta-label">Coverage Status</span>
+                            <span id="coverage-status" class="meta-value badge badge-status">-</span>
+                        </div>
+                    </div>
+
+                    <!-- Coverage Accounting Sub-panel -->
+                    <div class="coverage-breakdown">
+                        <div class="coverage-header">
+                            <span class="coverage-title">Coverage Accounting</span>
+                            <span id="coverage-ratio" class="coverage-ratio">0 / 0 Probes Resolved</span>
+                        </div>
+                        <div class="coverage-bar-track">
+                            <div id="coverage-bar-fill" class="coverage-bar-fill" style="width: 0%"></div>
+                        </div>
+                        <div class="coverage-stats-row">
+                            <span class="cov-stat">Scheduled: <strong id="cov-scheduled">0</strong></span>
+                            <span class="cov-stat">Resolved: <strong id="cov-resolved">0</strong></span>
+                            <span class="cov-stat">Unresolved: <strong id="cov-unresolved">0</strong></span>
+                        </div>
+                    </div>
+
+                    <!-- Incomplete Coverage Callout Banner (shown if unresolved probes exist) -->
+                    <div id="unresolved-banner" class="unresolved-banner hidden">
+                        <div class="unresolved-banner-header">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <line x1="12" y1="8" x2="12" y2="12"></line>
+                                <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                            </svg>
+                            <strong>Incomplete Run &mdash; Unresolved Probes</strong>
+                        </div>
+                        <p id="unresolved-banner-desc" class="unresolved-banner-desc">
+                            2 probes could not complete. These results do not establish whether the target resisted the
+                            attacks.
+                        </p>
+                        <details class="tech-rule-details">
+                            <summary>Technical policy details</summary>
+                            <span>Under rule <code>redteam.coverage/honest-accounting</code>, scheduled probes with
+                                transport or adapter failures do not resolve as assessments. Absence of evidence is not
+                                target resistance.</span>
+                        </details>
+                        <div id="unresolved-list" class="unresolved-list"></div>
+                    </div>
+                </div>
+
+                <!-- Live Run Evaluation Analysis & Context Banner -->
+                <div id="eval-context-banner" class="eval-context-banner hidden"></div>
+            </section>
+
+            <!-- Metrics Section -->
+            <section class="metrics-section fade-in delay-1" aria-label="Assessment Verdict Metrics">
+                <div class="metric-card metric-vulnerabilities">
+                    <div class="metric-icon" aria-hidden="true">⚠️</div>
+                    <div class="metric-info">
+                        <span class="metric-value" id="val-vulnerabilities">0</span>
+                        <span class="metric-label">Vulnerabilities</span>
+                        <span class="metric-hint">Confirmed attack success</span>
+                    </div>
+                </div>
+                <div class="metric-card metric-resistant">
+                    <div class="metric-icon" aria-hidden="true">🛡️</div>
+                    <div class="metric-info">
+                        <span class="metric-value" id="val-resistant">0</span>
+                        <span class="metric-label">Resistant</span>
+                        <span class="metric-hint">Target held against probe</span>
+                    </div>
+                </div>
+                <div class="metric-card metric-unverified">
+                    <div class="metric-icon" aria-hidden="true">❓</div>
+                    <div class="metric-info">
+                        <span class="metric-value" id="val-unverified">0</span>
+                        <span class="metric-label">Unverified</span>
+                        <span class="metric-hint">Missing grader / untrusted</span>
+                    </div>
+                </div>
+                <div class="metric-card metric-errors">
+                    <div class="metric-icon" aria-hidden="true">❌</div>
+                    <div class="metric-info">
+                        <span class="metric-value" id="val-errors">0</span>
+                        <span class="metric-label">Execution Errors</span>
+                        <span class="metric-hint">Adapter or probe failure</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Overview Counts Bar -->
+            <div class="overview-bar fade-in delay-1">
+                <span>Evaluated Observations: <strong id="total-observations">0</strong></span>
+                <span class="divider">&bull;</span>
+                <span>Correlated Finding Groups: <strong id="total-findings">0</strong></span>
+                <span class="divider">&bull;</span>
+                <span class="security-rule-pill">Evidence stored separately</span>
+            </div>
+
+            <!-- Findings Section -->
+            <section class="findings-section fade-in delay-2" aria-labelledby="section-findings-title">
+                <div class="section-header">
+                    <div>
+                        <h2 id="section-findings-title">Probe Results &amp; Findings</h2>
+                        <p class="section-subtitle">Correlated findings aggregated from engine observations. Select a
+                            filter to inspect findings by verdict.</p>
+                    </div>
+                    <div class="filters" role="tablist" aria-label="Filter probe results">
+                        <button type="button" class="filter-btn active" data-filter="all">All <span class="filter-count"
+                                id="count-all">0</span></button>
+                        <button type="button" class="filter-btn filter-vuln" data-filter="VULNERABLE">Vulnerable <span
+                                class="filter-count" id="count-vuln">0</span></button>
+                        <button type="button" class="filter-btn filter-resist" data-filter="RESISTANT">Resistant <span
+                                class="filter-count" id="count-resist">0</span></button>
+                        <button type="button" class="filter-btn filter-unverif" data-filter="UNVERIFIED">Unverified
+                            <span class="filter-count" id="count-unverif">0</span></button>
+                        <button type="button" class="filter-btn filter-error" data-filter="ERROR">Errors <span
+                                class="filter-count" id="count-error">0</span></button>
+                    </div>
+                </div>
+                <div id="findings-list" class="findings-list">
+                    <!-- Populated dynamically by app.js -->
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <footer class="app-footer">
+        <div class="footer-container">
+            <span>RedTeam Assessment Platform &mdash; Control Plane Dashboard</span>
+            <span>Evidence stored separately out-of-band &bull; <details class="tech-rule-inline-details">
+                    <summary>Technical details</summary><span>Rule:
+                        <code>redteam.artifact/public-report-never-inlines-payload</code></span>
+                </details></span>
+        </div>
+    </footer>
+
+    <script type="module" src="app.js"></script>
+</body>
+
+</html>

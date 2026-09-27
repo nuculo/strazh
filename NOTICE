@@ -1,0 +1,27 @@
+Strazh / RTAP (Red Team Assessment Platform)
+Copyright 2026 Strazh contributors
+
+This product includes software developed for the Strazh / RTAP project (https://strazh.dev).
+This notice attributes the Strazh project to Strazh contributors and does not represent an assignment or transfer of copyright.
+
+================================================================================
+THIRD-PARTY SOFTWARE NOTICES AND ATTRIBUTIONS
+================================================================================
+
+This repository incorporates or vendors third-party software components. Each
+component is governed by its own license terms as detailed below. Third-party
+licenses are retained in their respective directories and are not modified or
+subsumed by the primary license.
+
+1. Promptfoo (vendored in promptfoo/)
+   - Upstream: https://github.com/promptfoo/promptfoo
+   - License: MIT License (see promptfoo/LICENSE)
+   - Copyright: Copyright (c) Promptfoo 2025
+   - Subcomponents within promptfoo/:
+     * Apache 2.0 components: see promptfoo/src/external/APACHE_LICENSE
+     * Crescendo / PyRIT components: MIT License, Copyright (c) Microsoft Corporation
+       (see promptfoo/src/redteam/providers/crescendo/LICENSE)
+     * Prompt Injections strategies: MIT License, Copyright (c) Protect AI
+       (see promptfoo/src/redteam/strategies/promptInjections/README.md)
+     * OpenTelemetry protobuf definitions: Apache License 2.0, Copyright 2019, OpenTelemetry Authors
+       (see promptfoo/src/tracing/proto/opentelemetry/)

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rtap:recommendation-binding",
+  "title": "RecommendationBinding",
+  "description": "FROZEN_INTEGRATION.md §2, §6. Composite key checked at execution time, not just consumption time. execute() iff recommendation.binding == current.binding, else reject_as_stale(). campaignId/worldGeneration/featureSchemaVersion/modelDigest/policyVersion require exact equality; worldEpoch is checked against a policy-defined tolerance (default 0).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["campaignId", "worldGeneration", "worldEpoch", "featureSchemaVersion", "modelDigest", "policyVersion"],
+  "properties": {
+    "campaignId": { "$ref": "rtap:common#/$defs/Id" },
+    "worldGeneration": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Incremented on every full CampaignWorld rebuild (replay-from-scratch, schema migration, corruption recovery). Disambiguates epoch reuse across world lifetimes."
+    },
+    "worldEpoch": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Monotonic version of materialized state within one (campaignId, worldGeneration) lifetime."
+    },
+    "featureSchemaVersion": { "$ref": "rtap:common#/$defs/SchemaVersion" },
+    "modelDigest": {
+      "type": "string",
+      "minLength": 1,
+      "description": "SignedModelArtifact.sha256 — not core_fingerprint/FNV, which is compatibility-only, never authenticity."
+    },
+    "policyVersion": { "type": "string", "minLength": 1 }
+  }
+}

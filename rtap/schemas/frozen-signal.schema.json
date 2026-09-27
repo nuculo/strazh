@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rtap:frozen-signal",
+  "title": "FrozenSignal",
+  "description": "FROZEN_INTEGRATION.md §5.4. Advisory-only. No mapper from FrozenSignal to Verdict exists — redteam.signal/frozen-signal-is-not-a-verdict. kind is not a uniform ML-output enum: see the provenance table in §5.4 — only PROBE_UTILITY is a trained-model output today.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "subjectRef",
+    "value",
+    "quality",
+    "reasonCodes",
+    "evidenceObservationIds",
+    "modelRef",
+    "featureSnapshotRef",
+    "worldGeneration",
+    "worldEpoch"
+  ],
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": [
+        "PROBE_UTILITY",
+        "SATURATION",
+        "RISK_TREND",
+        "RETEST_PRIORITY",
+        "GRADER_DISAGREEMENT",
+        "TARGET_DRIFT",
+        "ANOMALY"
+      ]
+    },
+    "subjectRef": { "type": "string", "minLength": 1 },
+    "targetId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional, not required — only PROBE_UTILITY (the only implemented kind today) is inherently per-target; a future campaign-level kind (e.g. SATURATION, RISK_TREND) may have no single target to name. scoreCandidate() always sets it."
+    },
+    "value": { "type": "number" },
+    "quality": {
+      "type": "string",
+      "enum": ["SHADOW", "EXPERIMENTAL", "CALIBRATED"]
+    },
+    "reasonCodes": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "evidenceObservationIds": {
+      "type": "array",
+      "items": { "$ref": "rtap:common#/$defs/Id" }
+    },
+    "modelRef": { "type": "string", "minLength": 1 },
+    "adapterRef": { "type": ["string", "null"] },
+    "featureSnapshotRef": { "type": "string", "minLength": 1 },
+    "worldGeneration": { "type": "integer", "minimum": 0 },
+    "worldEpoch": { "type": "integer", "minimum": 0 }
+  }
+}

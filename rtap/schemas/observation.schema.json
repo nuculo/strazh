@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rtap:observation",
+  "title": "Observation",
+  "description": "ARCHITECTURE.md §1, §6: нормализованный результат одной попытки с provenance и evidence. Absent grading becomes UNVERIFIED — never a silent pass.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "schemaVersion",
+    "targetId",
+    "probeId",
+    "assessmentRunId",
+    "verdict",
+    "provenance",
+    "evidenceRefs"
+  ],
+  "properties": {
+    "id": { "$ref": "rtap:common#/$defs/Id" },
+    "schemaVersion": { "$ref": "rtap:common#/$defs/SchemaVersion" },
+    "targetId": { "$ref": "rtap:common#/$defs/Id" },
+    "probeId": { "$ref": "rtap:common#/$defs/Id" },
+    "assessmentRunId": { "$ref": "rtap:common#/$defs/Id" },
+    "verdict": { "$ref": "rtap:common#/$defs/Verdict" },
+    "evidenceRefs": {
+      "type": "array",
+      "items": { "$ref": "rtap:common#/$defs/EvidenceRef" }
+    },
+    "nativeMetrics": {
+      "type": "array",
+      "items": { "$ref": "rtap:common#/$defs/NativeMetric" }
+    },
+    "featureSnapshotRef": {
+      "type": ["string", "null"],
+      "description": "Set once the FeatureCompiler has produced a V60 for this Observation. Null until then."
+    },
+    "executionAttemptId": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "EXECUTION_SAFETY_RECOVERY.md §4.2/§15 point 2: binds this Observation to the active ExecutionAttempt that produced it. Null for Observations committed via a path not yet wired to the Phase 4.5 fencing gate — see redteam.execution/observation-binds-active-attempt."
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "engineId",
+        "engineVersion",
+        "adapterVersion",
+        "schemaVersion",
+        "nativeRunId",
+        "nativeResultId",
+        "graderKind"
+      ],
+      "properties": {
+        "engineId": { "type": "string", "enum": ["promptfoo", "duo-static", "duo-llm"] },
+        "engineVersion": { "type": "string", "minLength": 1 },
+        "adapterVersion": { "type": "string", "minLength": 1 },
+        "schemaVersion": { "$ref": "rtap:common#/$defs/SchemaVersion" },
+        "nativeRunId": { "type": "string", "minLength": 1 },
+        "nativeResultId": { "type": "string", "minLength": 1 },
+        "nativeProbeId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The engine-native probe identity (promptfoo `pluginId:strategyId`), preserved separately from RTAP's own `probeId` so RTAP-scheduled identity and native metadata never overwrite each other."
+        },
+        "graderKind": {
+          "type": "string",
+          "enum": ["llm-judge", "deterministic-verifier", "defaulted-pass", "none"]
+        },
+        "graderVersion": { "type": ["string", "null"] },
+        "capabilitySnapshotRef": { "type": ["string", "null"] },
+        "interceptorPlanGeneration": {
+          "type": ["integer", "null"],
+          "default": null,
+          "description": "EXECUTION_SAFETY_RECOVERY.md §10: plan generation enters ExecutionAttempt and Observation provenance. Null until an adapter is wired to a compiled InterceptorPlan (see redteam.execution/interceptor-order-is-deterministic)."
+        },
+        "configIgnored": {
+          "type": "boolean",
+          "default": false,
+          "description": "True when the engine ignored requested strategies/domains — duo-agents config-invariance, wiki/Arch_duo-agents/REDTEAM.md."
+        }
+      },
+      "description": "redteam.observation/every-observation-has-provenance — see law of the same name."
+    }
+  }
+}

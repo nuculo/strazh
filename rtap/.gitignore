@@ -1,0 +1,15 @@
+node_modules/
+dist/
+coverage/
+# M0 live-proof generated artifacts (see m0/README.md) — never commit real run output
+m0/promptfoo-output.json
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+# M1 assess generated output
+m1/out/
+m1/dead-out/
+# Demo assessment artifacts (contain raw test execution payloads; stored out-of-band)
+demo/out/**/artifacts/
+# Server runtime runs output
+runs/

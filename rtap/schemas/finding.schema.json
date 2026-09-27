@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rtap:finding",
+  "title": "Finding",
+  "description": "ARCHITECTURE.md §1: агрегированная проблема, подтверждённая одним или несколькими Observation. Не синоним каждого engine result.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "schemaVersion", "targetId", "verdict", "observationIds", "severity"],
+  "properties": {
+    "id": { "$ref": "rtap:common#/$defs/Id" },
+    "schemaVersion": { "$ref": "rtap:common#/$defs/SchemaVersion" },
+    "targetId": { "$ref": "rtap:common#/$defs/Id" },
+    "verdict": { "$ref": "rtap:common#/$defs/Verdict" },
+    "observationIds": {
+      "type": "array",
+      "items": { "$ref": "rtap:common#/$defs/Id" },
+      "minItems": 1,
+      "description": "redteam.finding/every-finding-has-observation — a Finding with zero Observations cannot exist."
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["critical", "high", "medium", "low", "informational"]
+    },
+    "suppressed": { "type": "boolean", "default": false },
+    "nativeMetrics": {
+      "type": "array",
+      "items": { "$ref": "rtap:common#/$defs/NativeMetric" },
+      "description": "Per-engine native risk scores, kept separate, never averaged into one number — redteam.score/native-scores-are-never-averaged."
+    }
+  }
+}

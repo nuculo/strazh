@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rtap:feature-snapshot",
+  "title": "FeatureSnapshot / V60",
+  "description": "FROZEN_INTEGRATION.md §4 + ADAPTIVE_REDTEAM_RUNTIME.md §4.4. Total, deterministic, pure mapping to V60. Coordinate groups: 0-11 response behavior, 12-21 grading, 22-31 runtime/trace, 32-41 probe/strategy, 42-51 campaign history, 52-59 provenance/quality. featureView distinguishes OBSERVATION (describes evidence already obtained, used for training labels) from CANDIDATE (describes a possible next RunStep, used for online scoring) — a model admitted for CANDIDATE must reject an OBSERVATION snapshot even at matching dimensionality (ADAPTIVE_REDTEAM_RUNTIME.md §4.4, redteam.feature/observation-and-candidate-views-are-not-interchangeable).",
+  "$defs": {
+    "V60": {
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 60,
+      "maxItems": 60,
+      "description": "Exactly 60 finite structured features. Never derived from frozen_embed(payload) or raw payload bytes — FeatureCompiler §4.3 forbidden inputs. A coordinate this compiler has no real signal for yet is set to the missing-value sentinel (see src/features/missing.ts), never guessed."
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "featureSchemaVersion",
+    "normalizationVersion",
+    "taxonomyVersion",
+    "compilerBuild",
+    "featureView",
+    "sourceObservationId",
+    "candidateProbeId",
+    "candidateTargetId",
+    "vector"
+  ],
+  "properties": {
+    "featureSchemaVersion": { "$ref": "rtap:common#/$defs/SchemaVersion" },
+    "normalizationVersion": { "type": "string", "minLength": 1 },
+    "taxonomyVersion": { "type": "string", "minLength": 1 },
+    "compilerBuild": { "type": "string", "minLength": 1 },
+    "featureView": { "type": "string", "enum": ["OBSERVATION", "CANDIDATE"] },
+    "sourceObservationId": {
+      "type": ["string", "null"],
+      "description": "Required (non-null) when featureView=OBSERVATION; must be null when featureView=CANDIDATE — a candidate has no source Observation, it has not been executed yet."
+    },
+    "candidateProbeId": {
+      "type": ["string", "null"],
+      "description": "Required (non-null) when featureView=CANDIDATE; must be null when featureView=OBSERVATION."
+    },
+    "candidateTargetId": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Required (non-null) when featureView=CANDIDATE; must be null when featureView=OBSERVATION. A candidate's identity is the (target, probe) pair, not the probe alone — see history-view.ts's targetProbeKey()."
+    },
+    "vector": { "$ref": "#/$defs/V60" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "featureView": { "const": "OBSERVATION" } } },
+      "then": {
+        "properties": {
+          "sourceObservationId": { "type": "string", "minLength": 1 },
+          "candidateProbeId": { "type": "null" },
+          "candidateTargetId": { "type": "null" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "featureView": { "const": "CANDIDATE" } } },
+      "then": {
+        "properties": {
+          "sourceObservationId": { "type": "null" },
+          "candidateProbeId": { "type": "string", "minLength": 1 },
+          "candidateTargetId": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  ]
+}

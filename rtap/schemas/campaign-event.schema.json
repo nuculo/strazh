@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rtap:campaign-event",
+  "title": "CampaignEventEnvelope",
+  "description": "FROZEN_INTEGRATION.md §3.3. Payload contains structured fields and EvidenceRefs, never raw malicious text. Duplicate eventId is idempotent.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "eventId",
+    "campaignId",
+    "assessmentRunId",
+    "sequence",
+    "occurredAt",
+    "committedAt",
+    "eventType",
+    "sourceObservationIds",
+    "featureSnapshotRef",
+    "taxonomySnapshotRef",
+    "payload"
+  ],
+  "properties": {
+    "schemaVersion": { "$ref": "rtap:common#/$defs/SchemaVersion" },
+    "eventId": { "$ref": "rtap:common#/$defs/Id" },
+    "campaignId": { "$ref": "rtap:common#/$defs/Id" },
+    "assessmentRunId": { "$ref": "rtap:common#/$defs/Id" },
+    "sequence": { "type": "integer", "minimum": 0 },
+    "occurredAt": { "$ref": "rtap:common#/$defs/Timestamp" },
+    "committedAt": { "$ref": "rtap:common#/$defs/Timestamp" },
+    "eventType": {
+      "type": "string",
+      "enum": [
+        "ProbeScheduled",
+        "ProbeExecuted",
+        "VulnerabilityObserved",
+        "ResistanceObserved",
+        "ObservationUnverified",
+        "GraderDisagreed",
+        "ExecutionFailed",
+        "FindingConfirmed",
+        "FindingSuppressed",
+        "MitigationApplied",
+        "RetestPassed",
+        "RetestFailed",
+        "TargetChanged",
+        "StaticRiskObserved",
+        "CampaignBudgetChanged"
+      ]
+    },
+    "sourceObservationIds": {
+      "type": "array",
+      "items": { "$ref": "rtap:common#/$defs/Id" }
+    },
+    "featureSnapshotRef": { "type": ["string", "null"] },
+    "taxonomySnapshotRef": { "type": ["string", "null"] },
+    "payload": {
+      "type": "object",
+      "description": "Structured fields and EvidenceRefs only — never raw payload bytes. See redteam.artifact/raw-payload-never-enters-feature-vector."
+    }
+  }
+}

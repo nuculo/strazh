@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rtap:target",
+  "title": "Target",
+  "description": "ARCHITECTURE.md §1: проверяемый объект с TargetKind. Credentials представлены только secret_ref.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "schemaVersion", "kind", "displayName"],
+  "properties": {
+    "id": { "$ref": "rtap:common#/$defs/Id" },
+    "schemaVersion": { "$ref": "rtap:common#/$defs/SchemaVersion" },
+    "kind": { "$ref": "rtap:common#/$defs/TargetKind" },
+    "displayName": { "type": "string", "minLength": 1 },
+    "secretRef": { "$ref": "rtap:common#/$defs/SecretRef" },
+    "domain": {
+      "type": "string",
+      "description": "Optional domain vertical, used to select a frozen domain adapter later — FROZEN_INTEGRATION.md §8.4."
+    },
+    "connectorConfig": {
+      "type": "object",
+      "description": "Kind-specific connection details. Never contains credentials — those live behind secretRef only."
+    }
+  }
+}

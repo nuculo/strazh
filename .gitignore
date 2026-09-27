@@ -1,0 +1,37 @@
+# Вендоренный исходник promptfoo на коммите 2c140ef (0.122.0).
+# Версионируется вместе с вики: разборы в wiki/Arch_promptfoo ссылаются на
+# конкретные строки этих файлов. node_modules и dist исключены ниже как
+# артефакты сборки — восстанавливаются через `npm install && npm run build`.
+
+# Клоны сторонних репозиториев — у каждого свой .git, версионируются отдельно
+duo-agents/
+duo-agents.zip
+
+# Артефакты сборки и зависимости
+node_modules/
+dist/
+build/
+
+# Локальные настройки и секреты
+.env
+.env.*
+.claude/settings.local.json
+
+# TLS Certificates and Private Keys
+*.key
+*.crt
+*.pem
+**/deploy/certs/*
+!**/deploy/certs/.gitkeep
+**/deploy/private/*
+!**/deploy/private/.gitkeep
+
+# Служебное
+.DS_Store
+**/.DS_Store
+
+# Локальная конфигурация инструментов (ссылается на пути вне репозитория)
+.claude/
+
+# Локальные артефакты оценки (содержат сырые полезные нагрузки тестов; хранятся вне репозитория)
+**/demo/out/**/artifacts/

@@ -1,0 +1,2 @@
+# Keep directory structure for mounting TLS certificates
+# Never commit .crt, .key, or .pem files
