@@ -86,20 +86,52 @@ To maintain absolute fidelity and audit integrity:
 
 ---
 
-## 6. Feedback on Nebius Token Factory
+## 6. Feedback on Nebius Token Factory & NVIDIA Tools
 
-`[NEBIUS FEEDBACK: Detailed Developer Experience Feedback]`
+### Nebius Token Factory
 - **Strengths:**
-  - Reliable OpenAI API compatibility allowed standard HTTP completion adapters to connect without proprietary client libraries.
-  - Transparent pricing and straightforward API key management during testing.
-- **Observations & Suggestions:**
-  - **Empty Completion Stop Tokens:** Under certain adversarial system overrides, Nemotron-3-Nano returned empty text completions with `finish_reason: "stop"` rather than explicit refusal text. Clarifying expected model behavior on system prompt override boundaries would aid red-teaming developers.
-  - **Direct Token Usage Reporting:** Enhanced granular metadata in response chunks (e.g. prompt token breakdown vs cached token breakdown) would improve cost accounting in automated testing harnesses.
+  - **OpenAI REST Compatibility:** Seamless integration with standard HTTP completion adapters without requiring proprietary client SDKs.
+  - **Predictable Latency & High Availability:** Fast round-trip times on completions during live bounded runs against `https://api.tokenfactory.nebius.com/v1`.
+  - **Transparent Pricing & Token Counting:** Clear token usage reporting in completion payloads enabled precise tracking of the 204 tokens consumed.
+- **Observations & Developer Suggestions:**
+  - **Granular Usage Breakdown:** Adding detailed breakdown for cached prompt tokens vs. uncached prompt tokens in response chunks would assist automated cost-accounting harnesses.
+  - **Stop Reason Documentation:** Under certain adversarial system overrides, Nemotron-3-Nano returned empty text completions with `finish_reason: "stop"`. Clearer documentation on provider-level safety filters vs. model-level EOS stops would help red-team tooling categorize responses more easily.
+
+### NVIDIA Nemotron Models
+- **Strengths:**
+  - **Built-in Guardrails Against Direct Extraction:** In our live baseline tests, `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` demonstrated impressive inherent resistance to direct canary disclosure without requiring heavy prompt engineering.
+  - **Compact Footprint with High Instruction Adherence:** Nano-30B offers fast inference suitable for high-throughput security pipeline scanning.
+- **Observations & Developer Suggestions:**
+  - **Response Behavior on Adversarial Boundary Probes:** When subjected to conflicting system instructions (override attempts), the model occasionally emits an early EOS / stop token with zero text content (`""`) rather than an explicit explanatory refusal. While safe from disclosure, this silence poses an epistemic challenge for automated graders, reinforcing the necessity of Strazh's `UNVERIFIED` verdict law.
 
 ---
 
-## 7. What's Next for Strazh / RTAP
+## 7. Challenges We Ran Into
+
+1. **Subprocess Concurrency & SQLite Locks:** Integrating Promptfoo into an automated control plane initially ran into SQLite lock contention during parallel evaluations. We resolved this by isolating execution environments with dedicated `PROMPTFOO_CONFIG_DIR`, disabling internal caching (`PROMPTFOO_CACHE_ENABLED: false`), and enforcing single-run concurrency ($N=1$).
+2. **The "Silence is Defense" Epistemic Trap:** In our first live baseline evaluation, empty model responses on instruction override probes were naively scored as `RESISTANT`. We caught this flaw, codified the invariant into our architectural laws, and developed offline derived re-evaluation to prove the fix without re-spending API tokens.
+3. **Preventing Evidence Leakage:** Red-team evaluation tools often accidentally leak the very payloads they test into git logs or public reports. Designing the out-of-band SHA-256 content-addressing architecture ensured that public reports remain safe to publish while preserving full cryptographic auditability.
+
+---
+
+## 8. Accomplishments That We're Proud Of
+
+- **Extensive Deterministic Test Suite:** **109 test files and 757 test cases** passing with zero flakiness (`npm test`).
+- **Formal Architectural Law Enforcement:** **94 architectural laws defined, with 90 passing deterministically** (`npm run laws`) and 4 pending external runtime integration.
+- **Production Staging & Working Demo:** Deployed live on AWS EC2 at `https://strazh.dev` (and `https://www.strazh.dev`) with Let's Encrypt TLS and a zero-inference interactive replay console for judges.
+- **Honest Security Accounting:** Strict exit code discipline (Exit Code 2 on partial/interrupted runs) ensuring security teams never mistake a dropped probe for a secure system.
+
+---
+
+## 9. What We Learned
+
+- **Vibes-based AI evaluation is dangerous:** Security testing LLMs requires the same mathematical invariants, transaction fencing, and state-machine rigor as financial ledgers.
+- **Epistemic humility in grading:** A model remaining silent is not evidence that it defended against an attack—automated tools must explicitly distinguish between verified resistance and unverified silence.
+
+---
+
+## 10. What's Next for Strazh / RTAP
 
 1. **Multi-Turn Conversational Jailbreak Probes:** Extend beyond single-turn bounded extractions to adaptive multi-turn tree-search probes.
-2. **Live KMS/HSM Signatures:** Transition from local filesystem signing keys to AWS/GCP KMS hardware root-of-trust for enterprise audit compliance.
+2. **Hardware KMS/HSM Signatures:** Transition from local filesystem signing keys to AWS/GCP KMS hardware root-of-trust for enterprise compliance (addressing pending Law 90).
 3. **Direct GitHub Actions Scanner Integration:** Build a native GitHub Action that consumes RTAP SARIF output directly into repository Security tabs.
