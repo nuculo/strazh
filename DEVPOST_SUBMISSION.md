@@ -11,8 +11,8 @@
 
 - **Working Demo URL:** `https://strazh.dev`  
   *(Current Status: Verified live on AWS EC2 behind Nginx reverse proxy with publicly trusted Let's Encrypt TLS certificate. Serves interactive unauthenticated judge replays and SARIF audit inspection.)*
-- **Public Code Repository:** `[PUBLIC REPOSITORY URL: https://github.com/nuculo/red_team]`  
-  *(Current Status: Repository is currently configured as INTERNAL during launch staging. Release candidate and documentation reside on branch `release/public-hackathon`. Pending visibility toggle to Public and/or merge to default `main` branch.)*
+- **Public Code Repository:** `https://github.com/nuculo/strazh`  
+  *(Current Status: Publicly accessible repository containing the audited open-source release snapshot on default branch `main`, with canonical Apache 2.0 license and third-party notices.)*
 - **Video Walkthrough / Demo:** `[PUBLIC YOUTUBE VIDEO URL: <Required: Public YouTube Link>]`  
   *(Length target: 2–3 minutes covering local simulated run, live Nebius Token Factory execution, dashboard inspection, and SARIF export. Must be publicly accessible on YouTube.)*
 - **Nebius Developer Feedback:** `[NEBIUS FEEDBACK: <See Dedicated Feedback Section Below>]`
