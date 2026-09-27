@@ -155,15 +155,10 @@ To maintain honest reporting, the following features are **not** implemented in 
 
 ## Reproducible Local Setup
 
-> [!NOTE]
-> **Repository Visibility & Default Branch Notice:**
-> - **Internal State:** This repository is currently configured as INTERNAL during launch staging. Direct links to the release branch are visible only to authenticated collaborators with repository access; public judge links will become accessible once repository visibility is set to Public.
-> - **Default Branch Gap:** GitHub defaults to the `main` branch, which currently lacks this root README and the hackathon release candidate files. All release code and documentation reside on `release/public-hackathon`. For general public viewing, this branch must be fast-forward merged to `main` or the default branch switched in repository settings.
-
 ### 1. Clone the Repository
 ```bash
-git clone -b release/public-hackathon https://github.com/nuculo/red_team.git
-cd red_team/rtap
+git clone https://github.com/nuculo/strazh.git
+cd strazh/rtap
 ```
 
 ### 2. Install Dependencies
@@ -293,7 +288,7 @@ read -s NEBIUS_API_KEY
 echo ""
 
 # 2. Atomically create .env with strict 0600 permissions:
-(umask 077 && cat <<EOF > /opt/red_team/rtap/.env
+(umask 077 && cat <<EOF > /opt/strazh/rtap/.env
 NODE_ENV=production
 OPERATOR_TOKEN=$(openssl rand -hex 32)
 NEBIUS_API_KEY=${NEBIUS_API_KEY}
