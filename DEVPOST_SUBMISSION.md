@@ -21,12 +21,12 @@
 
 ## 1. Inspiration & Problem Statement
 
-Most LLM security evaluations today suffer from three fatal flaws:
-1. **Vibes-Based Flakiness:** Security benchmarks treat LLM outputs as simple strings, often mistaking model silence or empty output as proof that a model successfully defended itself against an attack.
-2. **Dishonest Coverage Accounting:** When an inference provider times out or a target endpoint crashes, tools often mark tests as passing or omit them entirely, falsely reporting 100% defense.
-3. **Sensitive Evidence Leaks:** Conventional testing tools dump raw adversarial injection strings, sensitive canary tokens, and system prompts directly into git commits and public CI artifacts.
+Security evaluations of LLMs and generative AI applications face three difficult engineering challenges:
+1. **Non-Evaluable Outputs & Silent Failures:** When a model returns empty content or whitespace under attack, naive evaluation harnesses that only test negative assertions (such as `not-contains`) can mistakenly score silence as successful defense.
+2. **Incomplete Coverage Masking:** If an inference provider times out or an endpoint crashes during an evaluation run, tools that do not enforce strict coverage accounting can drop or ignore failed probes, masking the failure and giving false assurance.
+3. **Sensitive Payload Exposure:** Evaluating prompt injections and canary tokens requires handling confidential strings that should not be inlined directly into shared reports, public repositories, or CI logs.
 
-We built **Strazh / RTAP** to bring deterministic, law-enforced engineering discipline to AI red-teaming. Rather than a conversational chatbot or code-generating agent, Strazh is an **automated security assessment control plane and evaluation runner** that executes declarative adversarial probe suites, leases execution attempts, validates model responses against strict mathematical invariants, and outputs standardized, audit-grade SARIF security findings.
+We built **Strazh / RTAP** to address these challenges with law-enforced engineering discipline. Rather than a conversational chatbot or code-generating agent, Strazh is an **automated security assessment control plane and evaluation runner** that executes declarative adversarial probe suites, leases execution attempts, validates model responses against formal architectural laws, and outputs standardized, audit-grade SARIF security findings.
 
 ---
 
@@ -42,7 +42,7 @@ Strazh / RTAP operates as a law-enforced control plane for LLM red-teaming:
    - **`UNVERIFIED`:** Inconclusive signal (empty output or whitespace). Under RTAP laws, silence is not proof of defense. Maps to SARIF `review`.
    - **`ERROR`:** Transport or adapter failure (target unavailable, timeout). Maps to SARIF `notApplicable`.
 4. **Honest Coverage Accounting:** If any probe fails due to transport, network, or provider failure, the run status is marked **`INCOMPLETE` (Exit Code 2)**, preventing false claims of security.
-5. **Decoupled Out-of-Band Evidence Storage:** Public reports reference raw prompts and completions solely by SHA-256 content hashes (`artifacts/local:sha256:...`). Raw injection vectors and database ledgers are kept on private storage and git-ignored, preventing accidental payload leakage into public repository trees.
+5. **Decoupled Out-of-Band Evidence Storage:** Public reports reference raw prompts and completions solely by SHA-256 content hashes (`artifacts/local:sha256:...`). Storing evidence out-of-band and keeping raw artifact directories out of git reduces exposure in public reports and commits, without relying on hashes alone for confidentiality.
 6. **Standardized Security Reporting:** Generates OASIS SARIF 2.1.0 (`report.sarif`), human-readable Markdown (`report.md`), and structured JSON (`report.json`).
 7. **Interactive Web Console & Replay Viewer:** A browser-based dashboard providing unauthenticated inspection of historical replays and SARIF reports for judges alongside an authenticated operator panel for triggering bounded live evaluations.
 
@@ -80,7 +80,7 @@ During the **Nebius × NVIDIA Hackathon sprint**, the following major features w
 To maintain absolute fidelity and audit integrity:
 - **Models Tested Live:** `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` was tested live across two bounded runs (`live-baseline` and `live-mitigated`). Exactly **204 tokens** were consumed across 4 requests (73 + 32 + 67 + 32), with an estimated inference cost of < $0.001 (unverified against live Nebius billing ledger).
 - **Configured vs. Tested Models:** `nvidia/nemotron-3-super-120b-a12b` is configured in `demo/targets/nebius-direct.yaml` and exposed in the control plane, but has **not yet been executed live** to prevent unauthorized billing during testing.
-- **Evidence Hashes are Not Encryption:** Content addressing (`artifacts/local:sha256:...`) decouples raw strings from public reports and ensures tamper-evidence; it is not cryptographic encryption. Excluding raw artifact directories from git via `.gitignore` prevents accidental commits of sensitive payloads into public trees, but is not a substitute for access-controlled storage.
+- **Evidence Hashes & Out-of-Band Storage:** Content addressing (`artifacts/local:sha256:...`) and out-of-band storage decouple raw payload strings from public reports and reduce exposure in public repositories and commits; content hashes alone are not encryption and do not replace access control.
 - **SARIF Status:** SARIF 2.1.0 export is implemented and schema-valid; end-to-end ingestion into GitHub Advanced Security Code Scanning tabs in a live CI pipeline has not been demonstrated in this repository.
 - **Hosted Demo Status:** `https://strazh.dev` is verified live and publicly accessible on an AWS EC2 instance (`t3a.medium`) running Docker Compose with Nginx reverse proxy and Let's Encrypt TLS. Unauthenticated judge replays and system status endpoints are active and verified from external browsers.
 
@@ -102,7 +102,7 @@ To maintain absolute fidelity and audit integrity:
   - **Built-in Guardrails Against Direct Extraction:** In our live baseline tests, `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` demonstrated impressive inherent resistance to direct canary disclosure without requiring heavy prompt engineering.
   - **Compact Footprint with High Instruction Adherence:** Nano-30B offers fast inference suitable for high-throughput security pipeline scanning.
 - **Observations & Developer Suggestions:**
-  - **Response Behavior on Adversarial Boundary Probes:** When subjected to conflicting system instructions (override attempts), the model occasionally emits an early EOS / stop token with zero text content (`""`) rather than an explicit explanatory refusal. While safe from disclosure, this silence poses an epistemic challenge for automated graders, reinforcing the necessity of Strazh's `UNVERIFIED` verdict law.
+  - **Response Behavior on Adversarial Boundary Probes:** When subjected to conflicting system instructions (override attempts), the model returned an empty text completion (`""`) with `finish_reason: "stop"` rather than an explicit explanatory refusal. While safe from disclosure, an empty completion does not positively prove containment, reinforcing the necessity of Strazh's `UNVERIFIED` verdict law.
 
 ---
 
@@ -110,7 +110,7 @@ To maintain absolute fidelity and audit integrity:
 
 1. **Subprocess Concurrency & SQLite Locks:** Integrating Promptfoo into an automated control plane initially ran into SQLite lock contention during parallel evaluations. We resolved this by isolating execution environments with dedicated `PROMPTFOO_CONFIG_DIR`, disabling internal caching (`PROMPTFOO_CACHE_ENABLED: false`), and enforcing single-run concurrency ($N=1$).
 2. **The "Silence is Defense" Epistemic Trap:** In our first live baseline evaluation, empty model responses on instruction override probes were naively scored as `RESISTANT`. We caught this flaw, codified the invariant into our architectural laws, and developed offline derived re-evaluation to prove the fix without re-spending API tokens.
-3. **Preventing Evidence Leakage:** Red-team evaluation tools often accidentally leak the very payloads they test into git logs or public reports. Designing the out-of-band SHA-256 content-addressing architecture ensured that public reports remain safe to publish while preserving full cryptographic auditability.
+3. **Preventing Evidence Exposure:** Red-team evaluation tools often accidentally expose the very payloads they test into git logs or public reports. Designing the out-of-band SHA-256 content-addressing architecture ensured that public reports reference artifacts by digest while keeping raw payloads on private storage.
 
 ---
 
@@ -125,8 +125,8 @@ To maintain absolute fidelity and audit integrity:
 
 ## 9. What We Learned
 
-- **Vibes-based AI evaluation is dangerous:** Security testing LLMs requires the same mathematical invariants, transaction fencing, and state-machine rigor as financial ledgers.
-- **Epistemic humility in grading:** A model remaining silent is not evidence that it defended against an attack—automated tools must explicitly distinguish between verified resistance and unverified silence.
+- **Deterministic Evaluation Over Vibes:** Security testing LLMs requires deterministic invariants, transaction fencing, and state-machine rigor rather than assuming silent models defended themselves.
+- **Epistemic Humility in Grading:** A model remaining silent is not evidence that it defended against an attack—automated tools must explicitly distinguish between verified resistance and unverified silence.
 
 ---
 
