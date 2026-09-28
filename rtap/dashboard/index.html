@@ -27,38 +27,69 @@
                     &amp; out-of-band evidence tracking.</p>
             </div>
             <div class="header-actions">
-                <div class="quick-samples">
-                    <span class="quick-samples-label">Replay Prior Nebius (Derived):</span>
-                    <button type="button" id="btn-sample-derived-baseline" class="btn-sample btn-highlight"
-                        title="Replay Prior Live Baseline Corrected Evaluation (Direct: RESISTANT, Override: UNVERIFIED)">Replay: Baseline (Derived)</button>
-                    <button type="button" id="btn-sample-derived-mitigated" class="btn-sample btn-highlight"
-                        title="Replay Prior Live Mitigated Corrected Evaluation (Direct: RESISTANT, Override: UNVERIFIED)">Replay: Mitigated (Derived)</button>
-                    <span class="quick-samples-divider">|</span>
-                    <span class="quick-samples-label">Replay Prior Nebius (Pre-Fix):</span>
-                    <button type="button" id="btn-sample-live-baseline" class="btn-sample"
-                        title="Replay Prior Original Live Baseline Report (Pre-fix: flawed 2/2 RESISTANT)">Replay: Baseline (Pre-Fix)</button>
-                    <button type="button" id="btn-sample-live-mitigated" class="btn-sample"
-                        title="Replay Prior Original Live Mitigated Report (Pre-fix: flawed 2/2 RESISTANT)">Replay: Mitigated (Pre-Fix)</button>
-                    <span class="quick-samples-divider">|</span>
-                    <span class="quick-samples-label">Fixtures:</span>
-                    <button type="button" id="btn-sample-demo-unavailable" class="btn-sample"
-                        title="Replay Target Down (Incomplete Run / Transport Error)">Replay: Target Down</button>
-                    <button type="button" id="btn-sample-complete" class="btn-sample"
-                        title="Load local M1 completed assessment report fixture">Fixture: M1 Complete</button>
-                    <button type="button" id="btn-sample-sarif" class="btn-sample"
-                        title="Load local M1 SARIF 2.1.0 report fixture">Fixture: M1 SARIF</button>
-                </div>
-                <div class="file-loader">
-                    <label for="report-upload" class="upload-btn" id="upload-btn-label">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                            <polyline points="17 8 12 3 7 8"></polyline>
-                            <line x1="12" y1="3" x2="12" y2="15"></line>
-                        </svg>
-                        <span>Load Report File</span>
-                    </label>
-                    <input type="file" id="report-upload" accept=".json,.sarif" class="visually-hidden">
+                <div class="replay-control-bar" role="toolbar" aria-label="Assessment Replay Controls">
+                    <!-- Primary Replay Action -->
+                    <div class="replay-group primary-replay-group">
+                        <button type="button" id="btn-sample-derived-baseline" class="btn-primary-replay active-sample"
+                            data-sample="derived-baseline"
+                            title="Replay Prior Live Baseline Corrected Evaluation (Direct: RESISTANT, Override: UNVERIFIED)"
+                            aria-current="true">
+                            <span class="btn-badge">DEFAULT</span>
+                            <span class="btn-play-icon" aria-hidden="true">▶</span>
+                            <span class="btn-label">Replay: Baseline (Derived)</span>
+                        </button>
+                    </div>
+
+                    <!-- Comparison Replay -->
+                    <div class="replay-group">
+                        <span class="group-tag">Corrected</span>
+                        <button type="button" id="btn-sample-derived-mitigated" class="btn-sample"
+                            data-sample="derived-mitigated"
+                            title="Replay Prior Live Mitigated Corrected Evaluation (Direct: RESISTANT, Override: UNVERIFIED)">Replay: Mitigated (Derived)</button>
+                    </div>
+
+                    <!-- Pre-Fix Archive -->
+                    <div class="replay-group">
+                        <span class="group-tag">Pre-Fix Archive</span>
+                        <div class="button-subgroup">
+                            <button type="button" id="btn-sample-live-baseline" class="btn-sample"
+                                data-sample="live-baseline"
+                                title="Replay Prior Original Live Baseline Report (Pre-fix: flawed 2/2 RESISTANT)">Replay: Baseline (Pre-Fix)</button>
+                            <button type="button" id="btn-sample-live-mitigated" class="btn-sample"
+                                data-sample="live-mitigated"
+                                title="Replay Prior Original Live Mitigated Report (Pre-fix: flawed 2/2 RESISTANT)">Replay: Mitigated (Pre-Fix)</button>
+                        </div>
+                    </div>
+
+                    <!-- Fixtures & SARIF -->
+                    <div class="replay-group">
+                        <span class="group-tag">Fixtures</span>
+                        <div class="button-subgroup">
+                            <button type="button" id="btn-sample-demo-unavailable" class="btn-sample"
+                                data-sample="demo-unavailable"
+                                title="Replay Target Down (Incomplete Run / Transport Error)">Replay: Target Down</button>
+                            <button type="button" id="btn-sample-complete" class="btn-sample"
+                                data-sample="complete"
+                                title="Load local M1 completed assessment report fixture">Fixture: M1 Complete</button>
+                            <button type="button" id="btn-sample-sarif" class="btn-sample"
+                                data-sample="sarif"
+                                title="Load local M1 SARIF 2.1.0 report fixture">Fixture: M1 SARIF</button>
+                        </div>
+                    </div>
+
+                    <!-- File Loader -->
+                    <div class="replay-group file-loader-group">
+                        <label for="report-upload" class="upload-btn" id="upload-btn-label" title="Upload local RTAP JSON or SARIF report">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                <polyline points="17 8 12 3 7 8"></polyline>
+                                <line x1="12" y1="3" x2="12" y2="15"></line>
+                            </svg>
+                            <span>Load File</span>
+                        </label>
+                        <input type="file" id="report-upload" accept=".json,.sarif" class="visually-hidden">
+                    </div>
                 </div>
             </div>
         </header>
@@ -67,7 +98,7 @@
         <div class="judge-demo-notice-banner" role="region" aria-label="Demo replay notice">
             <div class="notice-badge">JUDGE DEMO &bull; REPLAY MODE</div>
             <div class="notice-text">
-                <strong>Replay of Prior Nebius Runs:</strong> The sample reports below are recorded, sanitized replays of prior live assessments against Nebius Token Factory (<code>nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B</code>). This public viewer performs <em>zero live inference</em> and stores no API keys. To run an active assessment with your own Nebius Token Factory API key, use the local CLI runbook.
+                <strong>Replay of Prior Nebius Runs:</strong> Displaying recorded Nebius Token Factory run (<code>nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B</code>) re-evaluated offline. No live model inference or API calls are made from this public viewer. To trigger live assessments or customize target defenses, sign in via Operator Access or run the local CLI.
             </div>
         </div>
 
@@ -81,78 +112,96 @@
             <button type="button" id="btn-dismiss-error" class="btn-dismiss" aria-label="Dismiss">&times;</button>
         </div>
 
-        <!-- Operator Live Assessment Console (Production MVP - strazh.dev) -->
-        <section id="operator-console" class="operator-console" aria-label="Operator Assessment Console">
-            <div class="console-header">
-                <div class="console-title-group">
-                    <span class="console-domain-badge">STRAZH.DEV &bull; OPERATOR CONSOLE</span>
-                    <h2>Authenticated Live Assessment</h2>
-                    <p class="console-subtitle">Trigger bounded assessments through the RTAP control plane against approved targets. Enforces concurrency limit (1), probe timeouts, and server-side kill switch.</p>
+        <!-- Operator Live Assessment Access (Collapsible Disclosure) -->
+        <details id="operator-access-details" class="operator-access-disclosure">
+            <summary class="operator-access-summary" id="operator-access-summary" aria-label="Toggle Operator Access Console">
+                <div class="operator-summary-left">
+                    <span class="operator-summary-icon" aria-hidden="true">🔒</span>
+                    <span class="operator-summary-title">Operator Access</span>
+                    <span class="operator-summary-subtitle">Authenticated live assessment triggers &amp; kill switch</span>
                 </div>
-                <div class="console-auth-status">
-                    <div id="auth-indicator" class="auth-indicator unauthenticated">
+                <div class="operator-summary-right">
+                    <div id="summary-auth-indicator" class="auth-indicator unauthenticated">
                         <span class="status-dot"></span>
-                        <span id="auth-status-text">Checking Service...</span>
+                        <span id="summary-auth-status-text">Operator Sign-In Required</span>
                     </div>
+                    <span class="disclosure-chevron" aria-hidden="true">▾</span>
                 </div>
-            </div>
+            </summary>
 
-            <!-- Login Bar (when unauthenticated) -->
-            <div id="operator-login-bar" class="operator-login-bar">
-                <div class="login-inputs">
-                    <label for="operator-token-input" class="visually-hidden">Operator Bearer Token</label>
-                    <input type="password" id="operator-token-input" class="operator-input mono" placeholder="Enter Operator Token (OPERATOR_TOKEN)" autocomplete="current-password">
-                    <button type="button" id="btn-operator-login" class="btn-primary-action">Sign In Operator</button>
+            <!-- Operator Live Assessment Console (Production MVP - strazh.dev) -->
+            <section id="operator-console" class="operator-console" aria-label="Operator Assessment Console">
+                <div class="console-header">
+                    <div class="console-title-group">
+                        <span class="console-domain-badge">STRAZH.DEV &bull; OPERATOR CONSOLE</span>
+                        <h2>Authenticated Live Assessment</h2>
+                        <p class="console-subtitle">Trigger bounded assessments through the RTAP control plane against approved targets. Enforces concurrency limit (1), probe timeouts, and server-side kill switch.</p>
+                    </div>
+                    <div class="console-auth-status">
+                        <div id="auth-indicator" class="auth-indicator unauthenticated">
+                            <span class="status-dot"></span>
+                            <span id="auth-status-text">Checking Service...</span>
+                        </div>
+                    </div>
                 </div>
-                <div class="login-hint">Credentials and Nebius API keys are kept strictly server-side. Configure OPERATOR_TOKEN in the server environment.</div>
-            </div>
 
-            <!-- Controls Bar (when authenticated) -->
-            <div id="operator-controls-bar" class="operator-controls-bar hidden">
-                <div class="controls-row">
-                    <div class="control-group">
-                        <label for="target-selector" class="control-label">Approved Target:</label>
-                        <select id="target-selector" class="target-select">
-                            <option value="" disabled selected>Loading approved targets...</option>
-                        </select>
+                <!-- Login Bar (when unauthenticated) -->
+                <div id="operator-login-bar" class="operator-login-bar">
+                    <div class="login-inputs">
+                        <label for="operator-token-input" class="visually-hidden">Operator Bearer Token</label>
+                        <input type="password" id="operator-token-input" class="operator-input mono" placeholder="Enter Operator Token (OPERATOR_TOKEN)" autocomplete="current-password">
+                        <button type="button" id="btn-operator-login" class="btn-primary-action">Sign In Operator</button>
                     </div>
-                    <div class="control-actions">
-                        <button type="button" id="btn-start-assessment" class="btn-start-action">
-                            <span class="action-icon">▶</span>
-                            <span>Start Assessment</span>
-                        </button>
-                        <button type="button" id="btn-cancel-assessment" class="btn-cancel-action hidden" title="Kill switch: Terminate running assessment immediately">
-                            <span class="action-icon">⏹</span>
-                            <span>Kill Switch</span>
-                        </button>
-                        <button type="button" id="btn-operator-logout" class="btn-secondary-action">Sign Out</button>
-                    </div>
+                    <div class="login-hint">Credentials and Nebius API keys are kept strictly server-side. Configure OPERATOR_TOKEN in the server environment.</div>
                 </div>
-                <div id="target-description-box" class="target-desc-box"></div>
-            </div>
 
-            <!-- Live Execution Status Bar (shown during/after assessment) -->
-            <div id="assessment-status-box" class="assessment-status-box hidden">
-                <div class="status-box-header">
-                    <div class="status-info">
-                        <span id="job-status-badge" class="badge badge-status">QUEUED</span>
-                        <span class="job-id-label">Run ID: <code id="job-run-id" class="mono">-</code></span>
-                        <span class="job-target-label">Target: <strong id="job-target-name">-</strong></span>
+                <!-- Controls Bar (when authenticated) -->
+                <div id="operator-controls-bar" class="operator-controls-bar hidden">
+                    <div class="controls-row">
+                        <div class="control-group">
+                            <label for="target-selector" class="control-label">Approved Target:</label>
+                            <select id="target-selector" class="target-select">
+                                <option value="" disabled selected>Loading approved targets...</option>
+                            </select>
+                        </div>
+                        <div class="control-actions">
+                            <button type="button" id="btn-start-assessment" class="btn-start-action">
+                                <span class="action-icon">▶</span>
+                                <span>Start Assessment</span>
+                            </button>
+                            <button type="button" id="btn-cancel-assessment" class="btn-cancel-action hidden" title="Kill switch: Terminate running assessment immediately">
+                                <span class="action-icon">⏹</span>
+                                <span>Kill Switch</span>
+                            </button>
+                            <button type="button" id="btn-operator-logout" class="btn-secondary-action">Sign Out</button>
+                        </div>
                     </div>
-                    <div class="status-timer" id="job-elapsed-time">0s</div>
+                    <div id="target-description-box" class="target-desc-box"></div>
                 </div>
-                <div class="progress-bar-track">
-                    <div id="job-progress-fill" class="progress-bar-fill indeterminate"></div>
-                </div>
-                <div class="status-footer">
-                    <span id="job-status-message">Initializing RTAP assessment pipeline...</span>
-                    <div id="job-actions" class="job-actions hidden">
-                        <button type="button" id="btn-view-job-report" class="btn-small-action">Load Live Report</button>
-                        <a id="link-download-sarif" class="btn-small-link" target="_blank" rel="noopener">Download SARIF</a>
+
+                <!-- Live Execution Status Bar (shown during/after assessment) -->
+                <div id="assessment-status-box" class="assessment-status-box hidden">
+                    <div class="status-box-header">
+                        <div class="status-info">
+                            <span id="job-status-badge" class="badge badge-status">QUEUED</span>
+                            <span class="job-id-label">Run ID: <code id="job-run-id" class="mono">-</code></span>
+                            <span class="job-target-label">Target: <strong id="job-target-name">-</strong></span>
+                        </div>
+                        <div class="status-timer" id="job-elapsed-time">0s</div>
+                    </div>
+                    <div class="progress-bar-track">
+                        <div id="job-progress-fill" class="progress-bar-fill indeterminate"></div>
+                    </div>
+                    <div class="status-footer">
+                        <span id="job-status-message">Initializing RTAP assessment pipeline...</span>
+                        <div id="job-actions" class="job-actions hidden">
+                            <button type="button" id="btn-view-job-report" class="btn-small-action">Load Live Report</button>
+                            <a id="link-download-sarif" class="btn-small-link" target="_blank" rel="noopener">Download SARIF</a>
+                        </div>
                     </div>
                 </div>
-            </div>
-        </section>
+            </section>
+        </details>
 
         <!-- Empty State / Drop Zone -->
         <div id="empty-state" class="empty-state drop-zone">

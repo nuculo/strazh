@@ -388,6 +388,19 @@ export function initDashboard() {
         sarif: '../m1/out/report.sarif'
     };
 
+    function setActiveSampleButton(type) {
+        document.querySelectorAll('.btn-sample, .btn-primary-replay').forEach(btn => {
+            btn.classList.remove('active-sample');
+            btn.removeAttribute('aria-current');
+        });
+        if (!type) return;
+        const activeBtn = document.querySelector(`[data-sample="${type}"]`);
+        if (activeBtn) {
+            activeBtn.classList.add('active-sample');
+            activeBtn.setAttribute('aria-current', 'true');
+        }
+    }
+
     function loadSample(type, label) {
         const primaryUrl = samplePaths[type];
         if (!primaryUrl) return;
@@ -410,6 +423,7 @@ export function initDashboard() {
                 try {
                     const data = JSON.parse(text);
                     validateAndLoadReport(data, label);
+                    setActiveSampleButton(type);
                 } catch (parseErr) {
                     showError("File Parse Error", `Could not parse sample ${label} as JSON: ${parseErr.message}`);
                 }
@@ -1041,6 +1055,16 @@ export function initDashboard() {
                 ? 'auth-indicator authenticated'
                 : 'auth-indicator unauthenticated';
         }
+        const summaryAuthIndicatorEl = document.getElementById('summary-auth-indicator');
+        const summaryAuthStatusTextEl = document.getElementById('summary-auth-status-text');
+        if (summaryAuthStatusTextEl) {
+            summaryAuthStatusTextEl.textContent = isAuthenticated ? statusText : 'Operator Sign-In Required';
+        }
+        if (summaryAuthIndicatorEl) {
+            summaryAuthIndicatorEl.className = isAuthenticated
+                ? 'auth-indicator authenticated'
+                : 'auth-indicator unauthenticated';
+        }
         if (operatorLoginBarEl) {
             operatorLoginBarEl.classList.toggle('hidden', isAuthenticated);
         }
@@ -1313,6 +1337,8 @@ export function initDashboard() {
                     operatorTokenInputEl.value = '';
                     hideError();
                     checkServerAndAuth();
+                    const operatorDetailsEl = document.getElementById('operator-access-details');
+                    if (operatorDetailsEl) operatorDetailsEl.open = true;
                 } else {
                     showError("Authentication Failure", data.error || "Invalid operator credentials.");
                 }
@@ -1351,11 +1377,13 @@ export function initDashboard() {
     // Initialize Auth & Status check
     checkServerAndAuth();
 
-    // Auto-load sample via query parameter if specified (e.g. ?sample=complete, ?sample=incomplete, ?sample=sarif)
+    // Auto-load sample via query parameter if specified; otherwise auto-load corrected Derived Baseline on first visit
     const urlParams = new URLSearchParams(window.location.search);
     const sampleParam = urlParams.get('sample');
     if (sampleParam && samplePaths[sampleParam]) {
         loadSample(sampleParam, samplePaths[sampleParam]);
+    } else {
+        loadSample('derived-baseline', 'data/derived-baseline.json');
     }
 }
 
