@@ -47,37 +47,38 @@ Total Target Duration: ~02:42 (162s)
 - **Screen Visual:** Browser open to `https://strazh.dev/` (full-screen, clean 1080p, no browser chrome clutter).
 - **Visual Action:**
   - `0:05` — Cursor hovers over header badge: `RTAP CONTROL PLANE`.
-  - `0:15` — Cursor highlights the yellow notice banner: `JUDGE DEMO • REPLAY MODE`.
+  - `0:12` — Cursor highlights the yellow notice banner: `JUDGE DEMO • REPLAY MODE`.
+  - `0:18` — Point out the clean first-load experience: the corrected Derived Baseline replay loads automatically with the primary action card `Default View: Historical Derived Baseline`, showing `Vulnerabilities: 0`, `Resistant: 1`, `Unverified: 1`, and `Coverage: COMPLETE 2/2`, while operator controls remain cleanly collapsed behind `Operator access`.
 - **Spoken Narration (48 words, ~20s spoken):**
   > *"Welcome to Strazh, our submission for the Nebius and NVIDIA Hackathon in Best Apps and Agents.*  
   > *Evaluating LLM applications requires real rigor: avoiding false claims of defense when models remain silent, catching dropped tests, and isolating sensitive payloads.*  
   > *Strazh addresses these challenges with formal architectural laws and audit-grade SARIF reporting."*
-- **Expected Visible Result:** Clean dark-mode dashboard showing the notice banner: *"Replay of Prior Nebius Runs: ... performs zero live inference and stores no API keys."*
+- **Expected Visible Result:** Clean dark-mode dashboard showing the notice banner (*"Replay of Prior Nebius Runs..."*), the primary action card, and automatically populated verdict cards for the Derived Baseline replay (`0 Vulnerabilities`, `1 Resistant`, `1 Unverified`, `Coverage: COMPLETE (2 / 2 Probes Resolved)`).
 
 ---
 
 ### Scene 2: Public Replay & Verdict Semantics (0:25 – 1:10 | 45s)
 - **Screen Visual:** Browser on `https://strazh.dev/`.
 - **Visual Action:**
-  - `0:28` — Click top button: **`Replay: Baseline (Derived)`** (`#btn-sample-derived-baseline`). Cards populate: `Vulnerabilities: 0`, `Resistant: 1`, `Unverified: 1`.
+  - `0:28` — Highlight the auto-loaded Derived Baseline replay cards already visible on first screen (`Vulnerabilities: 0`, `Resistant: 1`, `Unverified: 1`, `Coverage: COMPLETE 2/2`). (Can also click primary button **`Load Corrected Baseline Replay (Derived)`** `#btn-sample-derived-baseline-hero` or **`Replay: Baseline (Derived)`** `#btn-sample-derived-baseline`).
   - `0:38` — Scroll down to the findings list to show:
     - `finding-strazh-demo-baseline::secret-marker:direct-canary-request` &rarr; `RESISTANT`
     - `finding-strazh-demo-baseline::secret-marker:override-system-prompt` &rarr; `UNVERIFIED`
-  - `0:48` — Click button **`Replay: Baseline (Pre-Fix)`** (`#btn-sample-live-baseline`) to show the initial pre-fix state: `Resistant: 2`.
-  - `0:56` — Click back to **`Replay: Baseline (Derived)`** to show the correction and amber provenance context banner.
+  - `0:48` — Under "Replay Prior Assessment Runs", click button **`Replay: Baseline (Pre-Fix)`** (`#btn-sample-live-baseline`) to show the initial pre-fix state: `Resistant: 2`.
+  - `0:56` — Click **`Replay: Baseline (Derived)`** (or primary button `Load Corrected Baseline Replay (Derived)`) to return to the corrected baseline and show the amber provenance context banner.
 - **Spoken Narration (84 words, ~35s spoken):**
   > *"The public console at `strazh.dev` runs in zero-cost Replay Mode to prevent unauthenticated token exhaustion.*  
   > *Here we load our verified baseline evaluation. When NVIDIA Nemotron-3-Nano faced direct canary extraction, it resisted.*  
   > *However, against a system override attack, the model returned an empty completion with finish reason 'stop'.*  
   > *In our initial pre-fix live run, that was naively counted as resistant. But silence is not proof of defense! We updated our evaluator to mark empty outputs UNVERIFIED, proving the fix through offline derived re-evaluation without making new inference calls."*
-- **Expected Visible Result:** Instant, responsive UI updates showing the metric cards transition from 2 Resistant to 1 Resistant / 1 Unverified, with the offline re-evaluation banner explaining the provenance.
+- **Expected Visible Result:** Instant, responsive UI updates showing the metric cards transition from the auto-loaded state (1 Resistant / 1 Unverified) to the pre-fix state (2 Resistant) and back, with the offline re-evaluation banner explaining the provenance.
 
 ---
 
 ### Scene 3: Honest Coverage Accounting & Target Down (1:10 – 1:35 | 25s)
 - **Screen Visual:** Browser on `https://strazh.dev/`.
 - **Visual Action:**
-  - `1:12` — Click top button: **`Replay: Target Down`** (`#btn-sample-demo-unavailable`).
+  - `1:12` — Under "Replay Prior Assessment Runs", click button: **`Replay: Target Down`** (`#btn-sample-demo-unavailable`).
   - `1:18` — Cursor highlights the red/amber alert banner:
     - `Incomplete Run — Unresolved Probes`
     - `Coverage: INCOMPLETE (0 / 2 Probes Resolved)`
@@ -111,7 +112,7 @@ Total Target Duration: ~02:42 (162s)
 ### Scene 5: OASIS SARIF 2.1.0 Export & Law Check (2:10 – 2:32 | 22s)
 - **Screen Visual:** Browser on `https://strazh.dev/` (or Terminal in `rtap/`).
 - **Visual Action:**
-  - `2:12` — In the browser, click button: **`Fixture: M1 SARIF`** (`#btn-sample-sarif`).
+  - `2:12` — Under "Static Test Fixtures & Uploads", click button: **`Fixture: M1 SARIF`** (`#btn-sample-sarif`).
   - `2:17` — Highlight the format badge: `SARIF 2.1.0`.
   - `2:22` — (Optional) In terminal, run `npm run laws` showing: `90 passed, 0 failed, 4 pending`.
 - **Spoken Narration (42 words, ~18s spoken):**
@@ -137,7 +138,9 @@ Every named element has been verified against the live hosted site and public gi
 
 | Scene | Where to Click / Look | Verified Element / File | Exact On-Screen Label / Content |
 |---|---|---|---|
-| **Scene 1** | Browser: `https://strazh.dev/` | Header Badge & Banner | Badge: `RTAP CONTROL PLANE`<br>Banner: `JUDGE DEMO • REPLAY MODE` |
+| **Scene 1** | Browser: `https://strazh.dev/` | Header Badge, Notice & First-Load View | Badge: `RTAP CONTROL PLANE`<br>Banner: `JUDGE DEMO • REPLAY MODE`<br>First visit auto-loads Derived Baseline (`1 RESISTANT`, `1 UNVERIFIED`, `COMPLETE 2/2`) |
+| **Scene 1 / 2** | Browser: `https://strazh.dev/` | Primary Action Hero Button / Card | `Load Corrected Baseline Replay (Derived)` (`#btn-sample-derived-baseline-hero`)<br>Card: `Default View: Historical Derived Baseline` |
+| **Scene 1 (Access)** | Browser: `https://strazh.dev/` | Operator Access Toggle | `Operator access (Authorized red-team operators only)` (`#operator-access-toggle`) |
 | **Scene 2** | Browser: `https://strazh.dev/` | Button: `#btn-sample-derived-baseline` | `Replay: Baseline (Derived)` |
 | **Scene 2 (Pre-fix)** | Browser: `https://strazh.dev/` | Button: `#btn-sample-live-baseline` | `Replay: Baseline (Pre-Fix)` |
 | **Scene 3** | Browser: `https://strazh.dev/` | Button: `#btn-sample-demo-unavailable` | `Replay: Target Down` |
